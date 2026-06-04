@@ -20,7 +20,7 @@ import numpy as np
 import sounddevice as sd
 import pyperclip
 from pynput import keyboard
-from pynput.keyboard import Key, Controller
+from pynput.keyboard import Key, Controller, KeyCode
 
 import config
 import postprocess
@@ -179,9 +179,17 @@ class DictationApp:
             except Exception:
                 old = None
         pyperclip.copy(text)
-        time.sleep(0.05)
-        self.kb.press(Key.ctrl); self.kb.press('v')
-        self.kb.release('v'); self.kb.release(Key.ctrl)
+        time.sleep(0.1)
+        # Ctrl+V по ФИЗИЧЕСКОМУ коду клавиши V (0x56), а не по символу 'v':
+        # press('v') зависит от активной раскладки — при русской раскладке символ
+        # уходит как Unicode-ввод и НЕ комбинируется с Ctrl, поэтому вставка не
+        # срабатывает (диагностика diag_paste.py: способ с 'v' падал, с VK — работал).
+        # Микро-задержки между модификатором и клавишей — чтобы окно успело увидеть Ctrl.
+        v_key = KeyCode.from_vk(0x56)
+        self.kb.press(Key.ctrl); time.sleep(0.03)
+        self.kb.press(v_key); time.sleep(0.03)
+        self.kb.release(v_key); time.sleep(0.03)
+        self.kb.release(Key.ctrl)
         time.sleep(0.1)
         if old is not None:
             try:
