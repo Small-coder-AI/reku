@@ -31,12 +31,14 @@ RGB = {k: _rgb(v) for k, v in dict(
 # состояние -> цвет акцента orb'а
 STATE_RGB = {
     "loading":      RGB["dim"],
+    "downloading":  RGB["busy"],
     "idle":         RGB["accent"],
     "recording":    RGB["rec"],
     "transcribing": RGB["busy"],
 }
 STATE_TEXT = {
     "loading":      "Загрузка модели…",
+    "downloading":  "Скачиваю модель…",
     "idle":         "Готов",
     "recording":    "Запись…",
     "transcribing": "Распознаю…",
