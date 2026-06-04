@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QFrame, QLabel, QPushButton, QComboBox, QLineEdit,
     QVBoxLayout, QHBoxLayout, QStackedWidget, QGraphicsDropShadowEffect,
     QTextEdit, QRadioButton, QButtonGroup, QCheckBox, QSystemTrayIcon, QMenu,
-    QSizePolicy,
+    QSizePolicy, QSizeGrip, QScrollArea,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
@@ -99,7 +99,8 @@ class MainWindow(QWidget):
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(384, 540)
+        self.setMinimumSize(360, 460)
+        self.resize(410, 560)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 16, 18, 18)  # место под тень
@@ -120,6 +121,15 @@ class MainWindow(QWidget):
         self.stack.addWidget(self._build_settings_page())
 
         self.setStyleSheet(T.QSS)
+
+        self._flashing = False
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._end_flash)
+
+        self._grip = QSizeGrip(self)   # уголок для растягивания frameless-окна
+        self._grip.setFixedSize(16, 16)
+
         self.set_state("loading")
 
         if self.bridge is not None:
@@ -149,15 +159,7 @@ class MainWindow(QWidget):
         lay.addSpacing(16)
         self.wave = WaveformStrip(); lay.addWidget(self.wave)
 
-        lay.addSpacing(16)
-        tcard = QFrame(); tcard.setObjectName("TextCard")
-        tcard.setMinimumHeight(96)
-        tlay = QVBoxLayout(tcard); tlay.setContentsMargins(14, 10, 8, 10)
-        self.text = QTextEdit(); self.text.setObjectName("TextView")
-        self.text.setReadOnly(True)
-        self.text.setPlaceholderText("Здесь появится распознанный текст…")
-        tlay.addWidget(self.text)
-        lay.addWidget(tcard)
+        lay.addStretch(1)
 
         lay.addSpacing(14)
         bottom = QHBoxLayout(); bottom.setSpacing(10)
@@ -183,7 +185,7 @@ class MainWindow(QWidget):
 
     # ── страница настроек ────────────────────────────────────
     def _build_settings_page(self):
-        page = QWidget(); lay = QVBoxLayout(page)
+        inner = QWidget(); lay = QVBoxLayout(inner)
         lay.setContentsMargins(22, 8, 22, 20); lay.setSpacing(12)
 
         head = QHBoxLayout()
@@ -243,7 +245,16 @@ class MainWindow(QWidget):
         self.apply_btn.setCursor(Qt.PointingHandCursor)
         self.apply_btn.clicked.connect(self._apply_settings)
         lay.addWidget(self.apply_btn)
-        return page
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(inner)
+        # прозрачный фон, чтобы просвечивала карточка темы (иначе QScrollArea белый)
+        scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}")
+        scroll.viewport().setStyleSheet("background:transparent;")
+        return scroll
 
     # ── helpers выбора в комбобоксах ─────────────────────────
     @staticmethod
@@ -275,7 +286,11 @@ class MainWindow(QWidget):
         self._state = state
         rgb = T.STATE_RGB.get(state, T.RGB["accent"])
         self.orb.set_state(state)
-        self.status.setText(T.STATE_TEXT.get(state, state))
+        if state != "idle":                 # новое действие — снять подтверждение
+            self._flashing = False
+            self._flash_timer.stop()
+        if not self._flashing:
+            self.status.setText(T.STATE_TEXT.get(state, state))
         self.titlebar.set_dot(rgb)
         self.wave.set_active(state == "recording")
         rec = state == "recording"
@@ -288,11 +303,27 @@ class MainWindow(QWidget):
             self._update_hint()
 
     def set_result(self, text):
-        self.text.setPlainText(text)
+        # текст уже вставлен в активное окно; в самой программе его не дублируем —
+        # показываем лишь короткое подтверждение, что вставка прошла
+        self.status.setText("✓ вставлено")
+        self._flashing = True
+        self._flash_timer.start(1500)
+
+    def _end_flash(self):
+        self._flashing = False
+        self.status.setText(T.STATE_TEXT.get(self._state, self._state))
 
     def set_level(self, rms):
         self.orb.set_level(rms)
         self.wave.set_level(rms)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "_grip"):
+            m = 8
+            self._grip.move(self.width() - self._grip.width() - m,
+                            self.height() - self._grip.height() - m)
+            self._grip.raise_()
 
     # ── действия ─────────────────────────────────────────────
     def _toggle_record(self):
