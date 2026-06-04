@@ -1,0 +1,18 @@
+# окружение
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# машинно-специфичный конфиг (создаётся при первом запуске из config.py)
+config.json
+
+# артефакты
+_preview_*.png
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
