@@ -15,6 +15,7 @@ print("mode:", cfg.mode, "| vad:", cfg.vad_filter,
 # 2. модель + пайплайн
 app = DictationApp(cfg)
 app.load_model()
+print("backend:", app.backend.name, "| device:", app.backend.device_label)
 
 sr = cfg.sample_rate
 silence = np.zeros(sr * 3, dtype=np.float32)
