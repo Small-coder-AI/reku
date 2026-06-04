@@ -34,5 +34,19 @@ ok &= check("api поля присутствуют",
             hasattr(c, "api_provider") and hasattr(c, "api_base_url")
             and hasattr(c, "api_key") and hasattr(c, "api_model"))
 
+# model_store: пути считаются от config.data_dir() (монкипатчим на temp)
+import tempfile
+import model_store
+
+_tmp = tempfile.mkdtemp()
+config.data_dir = lambda: _tmp  # монкипатч источника правды путей
+ok &= check("model_cache_dir = data_dir/models",
+            model_store.model_cache_dir() == os.path.join(_tmp, "models"))
+ok &= check("model_path безопасит '/'",
+            model_store.model_path("Systran/faster-whisper-small")
+            == os.path.join(_tmp, "models", "Systran_faster-whisper-small"))
+ok &= check("is_cached=False для несуществующей",
+            model_store.is_cached("small") is False)
+
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)
