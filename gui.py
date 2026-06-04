@@ -16,6 +16,9 @@ from PySide6.QtWidgets import (
     QTextEdit, QRadioButton, QButtonGroup, QCheckBox, QSystemTrayIcon, QMenu,
     QSizePolicy,
 )
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+_SINGLE_KEY = "whisper_ptt_singleton"
 
 import gui_theme as T
 from gui_widgets import MicOrb, WaveformStrip, _c
@@ -23,7 +26,8 @@ from gui_widgets import MicOrb, WaveformStrip, _c
 # карты для комбобоксов настроек
 MODELS = ["large-v3", "large-v2", "medium", "small", "base", "tiny"]
 COMPUTES = ["float16", "int8_float16", "int8", "float32"]
-DEVICES = ["cuda", "cpu"]
+DEVICES = [("Авто", "auto"), ("GPU (CUDA)", "cuda"), ("CPU", "cpu"),
+           ("API (облако)", "api")]
 HOTKEYS = [("Right Ctrl", "ctrl_r"), ("Left Ctrl", "ctrl_l"),
            ("Right Alt", "alt_r"), ("Caps Lock", "caps_lock"),
            ("Right Shift", "shift_r"), ("F8", "f8"), ("F9", "f9")]
@@ -193,8 +197,14 @@ class MainWindow(QWidget):
         sec1 = QLabel("МОДЕЛЬ"); sec1.setObjectName("SectionLabel"); lay.addWidget(sec1)
         self.model_combo = QComboBox(); self.model_combo.addItems(MODELS)
         self._select_text(self.model_combo, self.cfg.model)
-        self.device_combo = QComboBox(); self.device_combo.addItems(DEVICES)
-        self._select_text(self.device_combo, self.cfg.device)
+        self.device_combo = QComboBox()
+        for label, val in DEVICES:
+            self.device_combo.addItem(label, val)
+        self._select_data(self.device_combo, self.cfg.device)
+        # «API (облако)» — зарезервированное место (Фаза 2): видно, но неактивно
+        _api_i = self.device_combo.findData("api")
+        if _api_i >= 0:
+            self.device_combo.model().item(_api_i).setEnabled(False)
         self.compute_combo = QComboBox(); self.compute_combo.addItems(COMPUTES)
         self._select_text(self.compute_combo, self.cfg.compute_type)
         lay.addWidget(_row("Модель", self.model_combo))
@@ -223,6 +233,11 @@ class MainWindow(QWidget):
         self.halluc_chk.setChecked(self.cfg.drop_hallucinations)
         lay.addWidget(self.vad_chk); lay.addWidget(self.halluc_chk)
 
+        self.vocab_edit = QLineEdit()
+        self.vocab_edit.setText(self.cfg.initial_prompt)
+        self.vocab_edit.setPlaceholderText("термины через запятую (помогают распознаванию)")
+        lay.addWidget(_row("Словарь", self.vocab_edit))
+
         lay.addStretch(1)
         self.apply_btn = QPushButton("Применить"); self.apply_btn.setObjectName("RecordBtn")
         self.apply_btn.setCursor(Qt.PointingHandCursor)
@@ -246,7 +261,14 @@ class MainWindow(QWidget):
         names = {v: l for l, v in HOTKEYS}
         key = names.get(self.cfg.hotkey, self.cfg.hotkey)
         mode = "PTT" if self.cfg.mode == "ptt" else "Toggle"
-        self.hint.setText(f"{key} · {mode}")
+        dev = ""
+        b = getattr(self.engine, "backend", None) if self.engine else None
+        if b is not None:
+            label = b.device_label
+            if self.cfg.device == "auto" and getattr(b, "device", None) == "cpu":
+                label = "CPU (GPU не найден)"
+            dev = " · " + label
+        self.hint.setText(f"{key} · {mode}{dev}")
 
     # ── состояние / результат / уровень ──────────────────────
     def set_state(self, state):
@@ -262,6 +284,8 @@ class MainWindow(QWidget):
         self.rec_btn.style().unpolish(self.rec_btn); self.rec_btn.style().polish(self.rec_btn)
         busy = state in ("loading", "transcribing")
         self.rec_btn.setEnabled(not busy)
+        if state == "idle":
+            self._update_hint()
 
     def set_result(self, text):
         self.text.setPlainText(text)
@@ -292,12 +316,13 @@ class MainWindow(QWidget):
         c = self.cfg
         old = (c.model, c.device, c.compute_type)
         c.model = self.model_combo.currentText()
-        c.device = self.device_combo.currentText()
+        c.device = self.device_combo.currentData()
         c.compute_type = self.compute_combo.currentText()
         c.hotkey = self.hotkey_combo.currentData()
         c.mode = "toggle" if self.tog_radio.isChecked() else "ptt"
         c.vad_filter = self.vad_chk.isChecked()
         c.drop_hallucinations = self.halluc_chk.isChecked()
+        c.initial_prompt = self.vocab_edit.text().strip()
         _cfg.save(c)
         if self.engine:
             self.engine.apply_config()
@@ -344,6 +369,17 @@ def main():
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)   # закрытие окна → в трей, не выход
+
+    # single-instance: если уже запущено — показать то окно и выйти
+    _probe = QLocalSocket()
+    _probe.connectToServer(_SINGLE_KEY)
+    if _probe.waitForConnected(200):
+        _probe.write(b"show"); _probe.flush(); _probe.waitForBytesWritten(300)
+        sys.exit(0)
+    QLocalServer.removeServer(_SINGLE_KEY)
+    _server = QLocalServer()
+    _server.listen(_SINGLE_KEY)
+
     cfg = config.load()
 
     bridge = Bridge()
@@ -354,6 +390,12 @@ def main():
         on_level=bridge.levelChanged.emit,
     )
     win = MainWindow(cfg, engine=engine, bridge=bridge)
+
+    def _on_second_instance():
+        conn = _server.nextPendingConnection()
+        if conn is not None:
+            conn.readyRead.connect(lambda: (conn.readAll(), win.show_normal()))
+    _server.newConnection.connect(_on_second_instance)
 
     # системный трей
     tray = QSystemTrayIcon(make_icon(T.STATE_RGB["loading"]), app)
