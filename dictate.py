@@ -25,9 +25,8 @@ from pynput.keyboard import Key, Controller
 import config
 import postprocess
 
-# faster_whisper импортируется ЛЕНИВО в load_model(): импорт тяжёлый (ct2.dll 59 МБ,
-# Defender сканирует ~5-10 c на первом запуске). Ленивый импорт = мгновенный старт
-# (иконка трея сразу) и фидбек в консоли ДО долгой паузы, а не после.
+# Инференс инкапсулирован в backends.py (faster_whisper грузится лениво там,
+# строго после cuda_setup). DictationApp работает через self.backend.
 
 
 def parse_hotkey(name: str):
@@ -45,13 +44,13 @@ class DictationApp:
     """Ядро: запись -> распознавание -> вставка. UI (консоль/трей) цепляется
     через колбэки on_state(state) и on_result(text)."""
 
-    STATES = ("loading", "idle", "recording", "transcribing")
+    STATES = ("loading", "downloading", "idle", "recording", "transcribing")
 
     def __init__(self, cfg: config.Config, on_state=None, on_result=None, on_level=None):
         self.cfg = cfg
         self.hotkey = parse_hotkey(cfg.hotkey)
         self.kb = Controller()
-        self.model = None
+        self.backend = None
 
         self._recording = False
         self._transcribing = False
@@ -83,13 +82,21 @@ class DictationApp:
 
     # ── загрузка модели ──────────────────────────────────────
     def load_model(self):
+        import backends
+        import model_store
+        self.backend = backends.select_backend(self.cfg)
+        mid = self.backend.model_id
+        if mid and not model_store.is_cached(mid):
+            self._set_state("downloading")
+            model_store.ensure_downloaded(
+                mid, on_progress=lambda m: print(
+                    f"Скачиваю модель '{m}' (первый запуск, может занять минуты)…",
+                    flush=True))
         self._set_state("loading")
-        from faster_whisper import WhisperModel  # ленивый тяжёлый импорт (см. шапку)
-        c = self.cfg
         t0 = time.perf_counter()
-        self.model = WhisperModel(c.model, device=c.device, compute_type=c.compute_type)
-        print(f"Модель '{c.model}' на {c.device}/{c.compute_type} за "
-              f"{time.perf_counter() - t0:.1f} c.", flush=True)
+        self.backend.load()
+        print(f"Модель '{mid or self.backend.name}' на {self.backend.device_label} "
+              f"за {time.perf_counter() - t0:.1f} c.", flush=True)
         self._set_state("idle")
 
     # ── запись ───────────────────────────────────────────────
@@ -140,15 +147,7 @@ class DictationApp:
     def transcribe(self, audio: np.ndarray) -> str:
         c = self.cfg
         t0 = time.perf_counter()
-        segments, info = self.model.transcribe(
-            audio,
-            language=c.lang_or_none,
-            beam_size=c.beam_size,
-            vad_filter=c.vad_filter,
-            initial_prompt=c.initial_prompt,
-            condition_on_previous_text=c.condition_on_previous_text,
-            no_repeat_ngram_size=c.no_repeat_ngram_size,
-        )
+        segments, info = self.backend.transcribe(audio, c)
         # вторичный страж: на не-речи language_probability валится (~0.2)
         if c.min_language_probability and info.language_probability < c.min_language_probability:
             print(f"[filter] подавлено: lang={info.language} "
@@ -220,7 +219,7 @@ class DictationApp:
 
     def start(self):
         """Грузит модель (если ещё нет) и запускает слушатель клавиш. Не блокирует."""
-        if self.model is None:
+        if self.backend is None:
             self.load_model()
         mode_hint = ("нажми хоткей — старт, нажми снова — стоп"
                      if self.cfg.mode == "toggle" else "держи хоткей и говори")
@@ -252,7 +251,7 @@ class DictationApp:
         with self._lock:
             if self._recording or self._transcribing:
                 return False
-            self.model = None
+            self.backend = None
         self.load_model()
         return True
 
