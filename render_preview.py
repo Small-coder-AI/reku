@@ -30,7 +30,6 @@ win = MainWindow(cfg)
 # idle + пример текста
 win.set_state("idle")
 win.orb._phase = 0.8
-win.text.setPlainText("открой настройки Claude Code и запусти GitHub")
 compose(win, "idle")
 
 # recording — выставим уровень и вэйвформ вручную (без event loop)
