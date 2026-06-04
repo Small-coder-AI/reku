@@ -5,18 +5,36 @@
 При первом запуске config.json создаётся со значениями по умолчанию.
 """
 import os
+import sys
 import json
 from dataclasses import dataclass, asdict, fields
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+def data_dir() -> str:
+    """Каталог данных приложения. Чистая функция (без побочных эффектов).
+    Frozen (.exe): %APPDATA%\\whisper_ptt — из Program Files писать нельзя.
+    Из исходников: каталог этого файла (удобно для разработки)."""
+    if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+        return os.path.join(appdata, "whisper_ptt")
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+CONFIG_PATH = os.path.join(data_dir(), "config.json")
 
 
 @dataclass
 class Config:
     # ── модель ───────────────────────────────────────────────
     model: str = "large-v3"          # large-v3 / medium / small / ... или путь
-    device: str = "cuda"             # cuda / cpu
-    compute_type: str = "float16"    # float16 / int8_float16 / int8 (cpu)
+    device: str = "auto"             # auto / cuda / cpu / api
+    compute_type: str = "auto"       # auto / float16 / int8_float16 / int8 / float32
+
+    # ── API-бэкенд (зарезервировано, реализация в Фазе 2) ────
+    api_provider: str = "openrouter"
+    api_base_url: str = "https://openrouter.ai/api/v1"
+    api_key: str = ""
+    api_model: str = ""
 
     # ── ввод ─────────────────────────────────────────────────
     hotkey: str = "ctrl_r"           # имя клавиши pynput (Key.<name>) или один символ
@@ -68,5 +86,6 @@ def load(path: str = CONFIG_PATH) -> Config:
 
 
 def save(cfg: Config, path: str = CONFIG_PATH) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(asdict(cfg), f, ensure_ascii=False, indent=2)
