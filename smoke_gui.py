@@ -28,11 +28,13 @@ for s in ["loading", "idle", "recording", "transcribing", "idle"]:
 bridge.levelChanged.emit(0.5); app.processEvents()
 bridge.resultReady.emit("тестовый распознанный текст"); app.processEvents()
 
+# текст больше не дублируется в UI — показывается подтверждение «вставлено»
+assert win._flashing and win.status.text() == "✓ вставлено"
+
 # настройки: применить без смены модели (не должно триггерить reload)
 win.stack.setCurrentIndex(1); app.processEvents()
 win._apply_settings(); app.processEvents()
 
-assert win.text.toPlainText() == "тестовый распознанный текст"
 assert win._state == "idle"
 print("hotkey parsed:", engine.hotkey)
 print("SMOKE OK: вся проводка без исключений, модель не грузилась")
