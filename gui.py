@@ -100,7 +100,7 @@ class MainWindow(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(360, 460)
-        self.resize(410, 560)
+        self.resize(440, 640)            # дефолт с запасом под страницу настроек
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 16, 18, 18)  # место под тень
