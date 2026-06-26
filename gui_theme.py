@@ -96,10 +96,15 @@ def _populate(pal: Palette):
     ACCENT, TEXT, TEXT_2 = pal.accent, pal.text, pal.text2
 
 
-def build_qss(p: Palette) -> str:
-    """Полный QSS из палитры. Цвета только из полей p — для светлой/тёмной идентично."""
+def build_qss(p: Palette, check_url=None) -> str:
+    """Полный QSS из палитры. Цвета только из полей p — для светлой/тёмной идентично.
+    check_url (если задан) — путь к PNG-галочке для индикатора включённого чекбокса."""
+    check_rule = f"image: url({check_url});" if check_url else "image: none;"
     return f"""
 #Card {{ background: {p.bg_window}; border: 1px solid {p.border}; border-radius: 16px; }}
+/* фон страницы настроек — ЯВНО в общем QSS (надёжнее palette(Window), который к
+   моменту первого показа мог не примениться к вьюпорту скролла); цвет = карточка */
+#SettingsInner {{ background: {p.bg_window}; }}
 QWidget {{ color: {p.text}; font-family: 'Segoe UI', sans-serif; font-size: 13px; }}
 #TitleLabel {{ color: {p.text}; font-size: 13px; font-weight: 600; letter-spacing: 0.3px; }}
 #StatusLabel {{ color: {p.text2}; font-size: 15px; font-weight: 500; }}
@@ -131,8 +136,14 @@ QComboBox {{ background: {p.bg_card2}; border: 1px solid {p.border}; border-radi
              padding: 6px 10px; color: {p.text}; min-height: 18px; }}
 QComboBox:hover {{ border-color: {p.accent}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
-QComboBox QAbstractItemView {{ background: {p.bg_card2}; border: 1px solid {p.border};
-    border-radius: 8px; selection-background-color: {p.accent}; outline: none; padding: 4px; }}
+/* всплывающий список: фон/цвет/выделение заданы ЯВНО — иначе нативный стиль Windows
+   рисует его системной (часто тёмной) палитрой, и в светлой теме он нечитаем */
+QComboBox QAbstractItemView {{ background: {p.bg_card}; color: {p.text};
+    border: 1px solid {p.border}; border-radius: 8px;
+    selection-background-color: {p.accent}; selection-color: #FFFFFF;
+    outline: none; padding: 4px; }}
+QComboBox QAbstractItemView::item {{ min-height: 26px; padding: 3px 8px; color: {p.text}; }}
+QComboBox QAbstractItemView::item:selected {{ background: {p.accent}; color: #FFFFFF; }}
 QComboBox QAbstractItemView::item:disabled {{ color: {p.text_dim}; }}
 
 QLineEdit {{ background: {p.bg_card2}; border: 1px solid {p.border}; border-radius: 9px;
@@ -143,14 +154,21 @@ QPlainTextEdit, QTextEdit {{ background: {p.bg_card2}; border: 1px solid {p.bord
     selection-background-color: {p.accent}; }}
 QPlainTextEdit:focus, QTextEdit:focus {{ border-color: {p.accent}; }}
 
+/* чекбокс: включённый — синий квадрат с БЕЛОЙ ГАЛОЧКОЙ (а не просто заливка),
+   чтобы выбор читался однозначно */
 QCheckBox {{ color: {p.text2}; spacing: 8px; }}
 QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 5px;
     border: 1px solid {p.border}; background: {p.bg_card2}; }}
-QCheckBox::indicator:checked {{ background: {p.accent}; border-color: {p.accent}; image: none; }}
+QCheckBox::indicator:hover {{ border-color: {p.accent}; }}
+QCheckBox::indicator:checked {{ background: {p.accent}; border-color: {p.accent}; {check_rule} }}
+/* радио: включённое — кольцо с ТОЧКОЙ в центре (radial-gradient, без картинки) */
 QRadioButton {{ color: {p.text2}; spacing: 8px; }}
 QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 8px;
     border: 1px solid {p.border}; background: {p.bg_card2}; }}
-QRadioButton::indicator:checked {{ background: {p.accent}; border: 4px solid {p.bg_card2}; }}
+QRadioButton::indicator:hover {{ border-color: {p.accent}; }}
+QRadioButton::indicator:checked {{ border: 1px solid {p.accent};
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 {p.accent}, stop:0.45 {p.accent}, stop:0.5 {p.bg_card2}, stop:1 {p.bg_card2}); }}
 
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {p.border}; border-radius: 4px; min-height: 24px; }}
@@ -174,10 +192,35 @@ def resolve_theme(choice: str, app=None) -> Palette:
         return DARK
 
 
-def set_active_theme(pal: Palette) -> str:
+def set_active_theme(pal: Palette, check_url=None) -> str:
     """Сделать палитру активной (мутирует RGB/STATE_RGB на месте) и вернуть её QSS."""
     _populate(pal)
-    return build_qss(pal)
+    return build_qss(pal, check_url)
+
+
+def build_palette(p: Palette):
+    """QPalette из палитры — для нативных частей, которые QSS не перекрывает (рамка
+    всплывающего списка комбобокса, тултипы). Без неё в светлой теме всплывашка может
+    взять тёмную системную палитру Windows и стать нечитаемой. Импорт Qt — лениво,
+    чтобы модуль оставался импортируемым без QApplication (его читают headless-тесты)."""
+    from PySide6.QtGui import QPalette, QColor
+    role, grp = QPalette.ColorRole, QPalette.ColorGroup
+    pal = QPalette()
+    pal.setColor(role.Window, QColor(p.bg_window))
+    pal.setColor(role.WindowText, QColor(p.text))
+    pal.setColor(role.Base, QColor(p.bg_card))
+    pal.setColor(role.AlternateBase, QColor(p.bg_card2))
+    pal.setColor(role.Text, QColor(p.text))
+    pal.setColor(role.Button, QColor(p.bg_card2))
+    pal.setColor(role.ButtonText, QColor(p.text))
+    pal.setColor(role.ToolTipBase, QColor(p.bg_card))
+    pal.setColor(role.ToolTipText, QColor(p.text))
+    pal.setColor(role.Highlight, QColor(p.accent))
+    pal.setColor(role.HighlightedText, QColor("#FFFFFF"))
+    pal.setColor(role.PlaceholderText, QColor(p.text_dim))
+    for r in (role.Text, role.WindowText, role.ButtonText):
+        pal.setColor(grp.Disabled, r, QColor(p.text_dim))
+    return pal
 
 
 # по умолчанию — тёмная, пока приложение не применит выбор из конфига
