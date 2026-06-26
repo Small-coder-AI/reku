@@ -3,6 +3,7 @@ orb'ом, живым вэйвформом, настройками и треем.
 
 Запуск:  python gui.py   (или pythonw gui.py без консоли)
 """
+import os
 import sys
 
 if sys.stdout:
@@ -13,8 +14,8 @@ from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PySide6.QtWidgets import (
     QApplication, QWidget, QFrame, QLabel, QPushButton, QComboBox, QLineEdit,
     QVBoxLayout, QHBoxLayout, QStackedWidget, QGraphicsDropShadowEffect,
-    QTextEdit, QRadioButton, QButtonGroup, QCheckBox, QSystemTrayIcon, QMenu,
-    QSizePolicy, QSizeGrip, QScrollArea,
+    QTextEdit, QPlainTextEdit, QRadioButton, QButtonGroup, QCheckBox,
+    QSystemTrayIcon, QMenu, QSizePolicy, QSizeGrip, QScrollArea,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
@@ -33,6 +34,7 @@ HOTKEYS = [("Right Ctrl", "ctrl_r"), ("Left Ctrl", "ctrl_l"),
            ("Right Shift", "shift_r"), ("F8", "f8"), ("F9", "f9")]
 LANGS = [("Авто", ""), ("Русский", "ru"), ("English", "en"),
          ("Deutsch", "de"), ("Español", "es"), ("Українська", "uk")]
+THEMES = [("Система", "system"), ("Светлая", "light"), ("Тёмная", "dark")]
 
 
 class Bridge(QObject):
@@ -84,7 +86,7 @@ class TitleBar(QWidget):
 
 def _row(label, widget):
     w = QWidget(); lay = QHBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0)
-    lab = QLabel(label); lab.setStyleSheet(f"color: {T.TEXT_2};"); lab.setFixedWidth(96)
+    lab = QLabel(label); lab.setObjectName("RowLabel"); lab.setFixedWidth(96)
     lay.addWidget(lab); lay.addWidget(widget, 1)
     return w
 
@@ -120,7 +122,8 @@ class MainWindow(QWidget):
         self.stack.addWidget(self._build_main_page())
         self.stack.addWidget(self._build_settings_page())
 
-        self.setStyleSheet(T.QSS)
+        self._tray_refresh = None        # колбэк перерисовки иконки трея (ставит main())
+        self.apply_theme()               # тёмная/светлая/системная из cfg.theme
 
         self._flashing = False
         self._flash_timer = QTimer(self)
@@ -228,6 +231,14 @@ class MainWindow(QWidget):
         ml.addWidget(self.ptt_radio); ml.addWidget(self.tog_radio); ml.addStretch(1)
         lay.addWidget(_row("Режим", modew))
 
+        secU = QLabel("ОФОРМЛЕНИЕ"); secU.setObjectName("SectionLabel"); lay.addWidget(secU)
+        self.theme_combo = QComboBox()
+        for label, val in THEMES:
+            self.theme_combo.addItem(label, val)
+        self._select_data(self.theme_combo, self.cfg.theme)
+        self.theme_combo.currentIndexChanged.connect(self._theme_changed)
+        lay.addWidget(_row("Тема", self.theme_combo))
+
         sec3 = QLabel("РАСПОЗНАВАНИЕ"); sec3.setObjectName("SectionLabel"); lay.addWidget(sec3)
         self.vad_chk = QCheckBox("VAD — резать тишину/шум")
         self.vad_chk.setChecked(self.cfg.vad_filter)
@@ -235,10 +246,24 @@ class MainWindow(QWidget):
         self.halluc_chk.setChecked(self.cfg.drop_hallucinations)
         lay.addWidget(self.vad_chk); lay.addWidget(self.halluc_chk)
 
-        self.vocab_edit = QLineEdit()
-        self.vocab_edit.setText(self.cfg.initial_prompt)
-        self.vocab_edit.setPlaceholderText("термины через запятую (помогают распознаванию)")
-        lay.addWidget(_row("Словарь", self.vocab_edit))
+        vocab_lbl = QLabel("Словарь терминов"); vocab_lbl.setObjectName("RowLabel")
+        lay.addWidget(vocab_lbl)
+        self.vocab_edit = QPlainTextEdit()
+        self.vocab_edit.setPlainText(self.cfg.hotwords)
+        self.vocab_edit.setPlaceholderText(
+            "термины через запятую или с новой строки\n(Passivbot, OData, 1С, Hyperliquid…)")
+        self.vocab_edit.setFixedHeight(76)
+        lay.addWidget(self.vocab_edit)
+
+        secS = QLabel("СИСТЕМА"); secS.setObjectName("SectionLabel"); lay.addWidget(secS)
+        self.autostart_chk = QCheckBox("Запускать при старте Windows")
+        try:
+            import autostart
+            self.autostart_chk.setChecked(autostart.is_enabled())
+        except Exception:
+            self.autostart_chk.setEnabled(False)
+        self.autostart_chk.toggled.connect(self._autostart_toggled)
+        lay.addWidget(self.autostart_chk)
 
         lay.addStretch(1)
         self.apply_btn = QPushButton("Применить"); self.apply_btn.setObjectName("RecordBtn")
@@ -281,6 +306,31 @@ class MainWindow(QWidget):
             dev = " · " + label
         self.hint.setText(f"{key} · {mode}{dev}")
 
+    # ── тема ─────────────────────────────────────────────────
+    def apply_theme(self):
+        """Применить тему из cfg.theme (system/dark/light). Зовётся при старте,
+        смене темы в настройках и смене системной темы Windows."""
+        from PySide6.QtWidgets import QApplication
+        pal = T.resolve_theme(self.cfg.theme, QApplication.instance())
+        self.setStyleSheet(T.set_active_theme(pal))
+        # перекрасить то, что QSS-перенакат не покрывает напрямую:
+        self.titlebar.set_dot(T.STATE_RGB.get(self._state, T.RGB["accent"]))
+        self.orb.update(); self.wave.update()
+        if self._tray_refresh:
+            self._tray_refresh(self._state)
+
+    def _theme_changed(self):
+        self.cfg.theme = self.theme_combo.currentData()
+        import config as _cfg; _cfg.save(self.cfg)
+        self.apply_theme()
+
+    def _autostart_toggled(self, on):
+        try:
+            import autostart
+            autostart.set_enabled(bool(on))
+        except Exception as e:
+            print(f"[autostart] {e}", file=sys.stderr)
+
     # ── состояние / результат / уровень ──────────────────────
     def set_state(self, state):
         self._state = state
@@ -297,10 +347,13 @@ class MainWindow(QWidget):
         self.rec_btn.setText("■ Стоп" if rec else "● Запись")
         self.rec_btn.setProperty("recording", "true" if rec else "false")
         self.rec_btn.style().unpolish(self.rec_btn); self.rec_btn.style().polish(self.rec_btn)
-        busy = state in ("loading", "transcribing")
+        busy = state not in ("idle", "recording")   # loading/downloading/transcribing/error
         self.rec_btn.setEnabled(not busy)
         if state == "idle":
             self._update_hint()
+        elif state == "error":
+            err = getattr(self.engine, "_last_error", None) if self.engine else None
+            self.hint.setText(err or "Не удалось загрузить модель — проверьте устройство/сеть")
 
     def set_result(self, text):
         # текст уже вставлен в активное окно; в самой программе его не дублируем —
@@ -353,7 +406,9 @@ class MainWindow(QWidget):
         c.mode = "toggle" if self.tog_radio.isChecked() else "ptt"
         c.vad_filter = self.vad_chk.isChecked()
         c.drop_hallucinations = self.halluc_chk.isChecked()
-        c.initial_prompt = self.vocab_edit.text().strip()
+        # многострочный ввод -> чистый список «через запятую» (по строкам и запятым)
+        c.hotwords = ", ".join(s.strip() for s in self.vocab_edit.toPlainText().splitlines()
+                               if s.strip())
         _cfg.save(c)
         if self.engine:
             self.engine.apply_config()
@@ -363,7 +418,14 @@ class MainWindow(QWidget):
         if self.engine and (c.model, c.device, c.compute_type) != old:
             import threading
             self.set_state("loading")
-            threading.Thread(target=self.engine.reload_model, daemon=True).start()
+            def _do_reload():
+                try:
+                    if not self.engine.reload_model():   # был занят (запись/распознавание)
+                        emit = self.bridge.stateChanged.emit if self.bridge else self.set_state
+                        emit("idle")                     # не виснуть в loading
+                except Exception:
+                    pass        # load_model уже перевёл UI в 'error'
+            threading.Thread(target=_do_reload, daemon=True).start()
 
     def hide_to_tray(self):
         self.hide()
@@ -377,26 +439,78 @@ class MainWindow(QWidget):
 
 # ── иконка трея (кружок + микрофон, цвет = статус) ───────────
 def make_icon(rgb):
-    from PySide6.QtGui import QPen
+    """Иконка трея/приложения: «squircle» бренд-цвета (статус) + крупный белый микрофон.
+    Рисуем в 64px, заполняя почти весь холст — так читается даже в мелком трее (16-24px)."""
+    from PySide6.QtGui import QPen, QLinearGradient, QBrush
+    r, g, b = rgb
     pm = QPixmap(64, 64); pm.fill(Qt.transparent)
     p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(Qt.NoPen); p.setBrush(QColor(rgb[0], rgb[1], rgb[2]))
-    p.drawEllipse(5, 5, 54, 54)
-    white = QColor(255, 255, 255, 235)
-    p.setBrush(white); p.drawRoundedRect(26, 16, 12, 21, 6, 6)
-    pen = QPen(white); pen.setWidth(3); pen.setCapStyle(Qt.RoundCap)
+    # фон — скруглённый квадрат с лёгким вертикальным градиентом (объём)
+    grad = QLinearGradient(0, 4, 0, 60)
+    grad.setColorAt(0.0, QColor(min(255, r + 26), min(255, g + 26), min(255, b + 26)))
+    grad.setColorAt(1.0, QColor(r, g, b))
+    p.setPen(Qt.NoPen); p.setBrush(QBrush(grad))
+    p.drawRoundedRect(4, 4, 56, 56, 18, 18)
+    # микрофон — белый, по центру, жирный
+    white = QColor(255, 255, 255, 242)
+    p.setBrush(white); p.setPen(Qt.NoPen)
+    p.drawRoundedRect(25, 14, 14, 23, 7, 7)              # капсула
+    pen = QPen(white); pen.setWidthF(3.6); pen.setCapStyle(Qt.RoundCap)
     p.setPen(pen); p.setBrush(Qt.NoBrush)
-    p.drawArc(20, 27, 24, 22, 180 * 16, 180 * 16)
-    p.drawLine(32, 39, 32, 47)
-    p.drawLine(25, 47, 39, 47)
+    p.drawArc(18, 23, 28, 27, 180 * 16, 180 * 16)        # дужка-держатель (U снизу капсулы)
+    p.drawLine(32, 46, 32, 52)                            # ножка
+    p.drawLine(24, 52, 40, 52)                            # подставка
     p.end()
     return QIcon(pm)
+
+
+def _run_selftest():
+    """Headless-самопроверка собранного .exe (WHISPER_PTT_SELFTEST=1).
+    UI не поднимаем: грузим модель, делаем короткую транскрипцию тишины,
+    пишем результат в %APPDATA%/whisper_ptt/selftest.json и выходим.
+    Главное — убедиться, что ct2 ВИДИТ CUDA (а не молча ушёл на CPU из-за
+    непойманной DLL). test_frozen_smoke.py читает этот json."""
+    import json
+    import numpy as np
+    import config
+    import cuda_setup
+    import backends
+    from dictate import DictationApp
+
+    result = {"cuda_device_count": 0, "device": None, "transcribe_ok": False,
+              "added_dll_dirs": list(getattr(cuda_setup, "_ADDED", [])), "error": None}
+    try:
+        try:
+            import ctranslate2
+            result["cuda_device_count"] = ctranslate2.get_cuda_device_count()
+        except Exception as e:
+            result["error"] = f"ct2 import/cuda: {e}"
+
+        cfg = config.load()
+        app = DictationApp(cfg)
+        app.load_model()
+        result["device"] = app.backend.device
+        silence = np.zeros(cfg.sample_rate, dtype=np.float32)
+        app.transcribe(silence)        # не должно бросать исключение
+        result["transcribe_ok"] = True
+    except Exception as e:
+        result["error"] = f"{type(e).__name__}: {e}"
+
+    out = os.path.join(config.data_dir(), "selftest.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print("[selftest]", json.dumps(result, ensure_ascii=False), flush=True)
+    return 0 if (result["device"] and result["transcribe_ok"]) else 1
 
 
 def main():
     import threading
     import config
     from dictate import DictationApp
+
+    if os.environ.get("WHISPER_PTT_SELFTEST") == "1":
+        sys.exit(_run_selftest())
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)   # закрытие окна → в трей, не выход
@@ -453,6 +567,11 @@ def main():
         tray.setIcon(make_icon(rgb))
         tray.setToolTip(f"whisper_ptt — {T.STATE_TEXT.get(s, s)}")
     bridge.stateChanged.connect(on_tray_state)
+
+    # перерисовать иконку трея при смене темы + следовать системной теме на лету
+    win._tray_refresh = on_tray_state
+    app.styleHints().colorSchemeChanged.connect(
+        lambda *_: win.apply_theme() if win.cfg.theme == "system" else None)
 
     win.show()
     threading.Thread(target=engine.start, daemon=True).start()
