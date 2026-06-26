@@ -20,6 +20,7 @@ import re
 
 import cuda_setup  # noqa: F401 — кладёт nvidia-DLL в PATH СТРОГО до faster_whisper
 from faster_whisper import WhisperModel
+import config
 
 CYR = re.compile(r"[А-Яа-яЁё]")
 LAT = re.compile(r"[A-Za-z]")
@@ -65,7 +66,8 @@ def get_audio():
 
 def main():
     audio = get_audio()
-    model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+    cfg = config.load()        # устройство/точность из конфига — не падать на CPU-машинах
+    model = WhisperModel("large-v3", device=cfg.device, compute_type=cfg.compute_type)
     print("=" * 72)
     for name, kw in CONFIGS:
         segs, info = model.transcribe(audio, **COMMON, **kw)
