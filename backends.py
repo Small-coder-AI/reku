@@ -105,6 +105,8 @@ class CTranslate2Backend(Backend):
             initial_prompt=cfg.initial_prompt,
             condition_on_previous_text=cfg.condition_on_previous_text,
             no_repeat_ngram_size=cfg.no_repeat_ngram_size,
+            # пусто -> None: пустую строку get_prompt тоже игнорирует, но None чище
+            hotwords=(getattr(cfg, "hotwords", "") or None),
         )
 
 
