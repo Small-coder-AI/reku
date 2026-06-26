@@ -91,6 +91,37 @@ def _row(label, widget):
     return w
 
 
+_CHECK_URL = None
+
+
+def _check_icon_url():
+    """Путь к PNG-галочке для индикатора включённого чекбокса (QSS image:url). Белая
+    галочка на синем (accent) фоне читается и в светлой, и в тёмной теме — одной хватает.
+    Рисуем один раз в data_dir, путь — с прямыми слэшами (так его понимает QSS)."""
+    global _CHECK_URL
+    if _CHECK_URL:
+        return _CHECK_URL
+    try:
+        import config
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QPen
+        d = config.data_dir(); os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "check.png")
+        pm = QPixmap(18, 18); pm.fill(Qt.transparent)
+        p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor(255, 255, 255)); pen.setWidthF(2.3)
+        pen.setCapStyle(Qt.RoundCap); pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        p.drawPolyline([QPointF(4.0, 9.5), QPointF(7.5, 13.0), QPointF(14.0, 5.5)])
+        p.end()
+        pm.save(path, "PNG")
+        _CHECK_URL = path.replace("\\", "/")
+    except Exception as e:
+        print(f"[theme] не смог нарисовать галочку чекбокса: {e}", file=sys.stderr)
+        _CHECK_URL = None
+    return _CHECK_URL
+
+
 class MainWindow(QWidget):
     def __init__(self, cfg, engine=None, bridge=None):
         super().__init__()
@@ -188,7 +219,8 @@ class MainWindow(QWidget):
 
     # ── страница настроек ────────────────────────────────────
     def _build_settings_page(self):
-        inner = QWidget(); lay = QVBoxLayout(inner)
+        inner = QWidget(); inner.setObjectName("SettingsInner")
+        lay = QVBoxLayout(inner)
         lay.setContentsMargins(22, 8, 22, 20); lay.setSpacing(12)
 
         head = QHBoxLayout()
@@ -276,9 +308,11 @@ class MainWindow(QWidget):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(inner)
-        # прозрачный фон, чтобы просвечивала карточка темы (иначе QScrollArea белый)
-        scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}")
-        scroll.viewport().setStyleSheet("background:transparent;")
+        # НЕ зовём scroll.setStyleSheet(...) и НЕ делаем вьюпорт прозрачным: отдельный
+        # стиль на контейнере обрывал каскад глобального #RecordBtn к кнопке «Применить»
+        # внутри (она теряла синий фон и была невидима). Прозрачность не нужна — вьюпорт
+        # красит palette(Window) = bg_window, что совпадает с карточкой (палитру ставит
+        # apply_theme через T.build_palette, поэтому фон сходится в обеих темах).
         return scroll
 
     # ── helpers выбора в комбобоксах ─────────────────────────
@@ -311,8 +345,13 @@ class MainWindow(QWidget):
         """Применить тему из cfg.theme (system/dark/light). Зовётся при старте,
         смене темы в настройках и смене системной темы Windows."""
         from PySide6.QtWidgets import QApplication
-        pal = T.resolve_theme(self.cfg.theme, QApplication.instance())
-        self.setStyleSheet(T.set_active_theme(pal))
+        app = QApplication.instance()
+        pal = T.resolve_theme(self.cfg.theme, app)
+        self.setStyleSheet(T.set_active_theme(pal, _check_icon_url()))
+        if app is not None:
+            # палитра для нативных частей (всплывашка комбобокса, тултипы), которые QSS
+            # не перекрывает — иначе в светлой теме они берут тёмную системную палитру
+            app.setPalette(T.build_palette(pal))
         # перекрасить то, что QSS-перенакат не покрывает напрямую:
         self.titlebar.set_dot(T.STATE_RGB.get(self._state, T.RGB["accent"]))
         self.orb.update(); self.wave.update()
@@ -330,6 +369,10 @@ class MainWindow(QWidget):
             autostart.set_enabled(bool(on))
         except Exception as e:
             print(f"[autostart] {e}", file=sys.stderr)
+            # реестр не изменился — откатываем чекбокс, иначе врёт пользователю
+            self.autostart_chk.blockSignals(True)
+            self.autostart_chk.setChecked(not on)
+            self.autostart_chk.blockSignals(False)
 
     # ── состояние / результат / уровень ──────────────────────
     def set_state(self, state):
@@ -513,6 +556,9 @@ def main():
         sys.exit(_run_selftest())
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")                 # стабильная отрисовка QSS+палитры на всех
+                                           # платформах: нативный Win-стиль игнорирует
+                                           # часть стилей (тёмная всплывашка, бледная кнопка)
     app.setQuitOnLastWindowClosed(False)   # закрытие окна → в трей, не выход
 
     # single-instance: если уже запущено — показать то окно и выйти
