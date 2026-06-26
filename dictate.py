@@ -139,6 +139,11 @@ class DictationApp:
             self._stream.start()
         except Exception as e:
             self._recording = False
+            if self._stream is not None:        # стрим мог создаться, но .start() упал —
+                try:                            # закрываем, иначе течёт ресурс PortAudio
+                    self._stream.close()
+                except Exception:
+                    pass
             self._stream = None
             self._last_error = str(e)
             print(f"[start_rec] не смог открыть микрофон: {e}", file=sys.stderr)
