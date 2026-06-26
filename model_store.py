@@ -25,19 +25,37 @@ def model_path(model: str) -> str:
     return os.path.join(model_cache_dir(), model.replace("/", "_"))
 
 
+# Полный набор: модель грузится несколькими файлами. Проверяем не только model.bin,
+# иначе ОБОРВАННАЯ докачка (есть model.bin, нет токенайзера) сочтётся «скачано» и
+# WhisperModel упадёт при загрузке → UI зависнет в loading (см. dictate.load_model).
+_REQUIRED = ("model.bin", "config.json")
+_TOKENIZERS = ("tokenizer.json", "vocabulary.json", "vocabulary.txt")
+
+
 def is_cached(model: str) -> bool:
-    """Скачана ли модель (есть ли model.bin в её каталоге)."""
-    return os.path.isfile(os.path.join(model_path(model), "model.bin"))
+    """Скачана ли модель ПОЛНОСТЬЮ (а не оборванная докачка): есть model.bin,
+    config.json и хотя бы один файл токенайзера."""
+    d = model_path(model)
+    if not all(os.path.isfile(os.path.join(d, f)) for f in _REQUIRED):
+        return False
+    return any(os.path.isfile(os.path.join(d, t)) for t in _TOKENIZERS)
 
 
 def ensure_downloaded(model: str, on_progress=None) -> str:
     """Гарантирует наличие модели локально. Возвращает путь к ней.
-    on_progress(model) зовётся один раз перед началом скачивания (для UI)."""
+    on_progress(model) зовётся один раз перед началом скачивания (для UI).
+    Качаем во временный каталог и атомарно переименовываем — прерванная докачка
+    не оставит «полу-скачанный» каталог, который is_cached сочтёт готовым."""
     p = model_path(model)
     if is_cached(model):
         return p
     if on_progress:
         on_progress(model)
+    import shutil
     from faster_whisper.utils import download_model
-    download_model(model, output_dir=p)
+    tmp = p + ".tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    download_model(model, output_dir=tmp)
+    shutil.rmtree(p, ignore_errors=True)   # убрать возможный неполный прежний
+    os.replace(tmp, p)                      # атомарная замена готовым каталогом
     return p

@@ -62,5 +62,28 @@ try:
 except NotImplementedError:
     ok &= check("OpenVINOBackend.load кидает NotImplementedError", True)
 
+# CTranslate2Backend.transcribe пробрасывает hotwords (пусто -> None, иначе строка)
+captured = {}
+
+
+class _FakeModel:
+    def transcribe(self, audio, **kw):
+        captured.update(kw)
+        return iter([]), S(language="ru", language_probability=0.9)
+
+
+b3 = CTranslate2Backend(model="small", device="cpu", compute_type="int8")
+b3._model = _FakeModel()
+_cfg_hw = S(lang_or_none="ru", beam_size=5, vad_filter=True, initial_prompt="P",
+            condition_on_previous_text=False, no_repeat_ngram_size=3, hotwords="OData, 1С")
+b3.transcribe(None, _cfg_hw)
+ok &= check("hotwords проброшен в transcribe", captured.get("hotwords") == "OData, 1С")
+
+captured.clear()
+_cfg_no = S(lang_or_none="ru", beam_size=5, vad_filter=True, initial_prompt="P",
+            condition_on_previous_text=False, no_repeat_ngram_size=3, hotwords="")
+b3.transcribe(None, _cfg_no)
+ok &= check("пустой hotwords -> None", captured.get("hotwords") is None)
+
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)

@@ -44,13 +44,18 @@ class DictationApp:
     """Ядро: запись -> распознавание -> вставка. UI (консоль/трей) цепляется
     через колбэки on_state(state) и on_result(text)."""
 
-    STATES = ("loading", "downloading", "idle", "recording", "transcribing")
+    STATES = ("loading", "downloading", "idle", "recording", "transcribing", "error")
 
     def __init__(self, cfg: config.Config, on_state=None, on_result=None, on_level=None):
         self.cfg = cfg
-        self.hotkey = parse_hotkey(cfg.hotkey)
+        try:
+            self.hotkey = parse_hotkey(cfg.hotkey)
+        except ValueError as e:           # битый хоткей в config.json не должен ронять старт
+            print(f"[init] {e}; беру дефолт ctrl_r", file=sys.stderr)
+            self.hotkey = parse_hotkey("ctrl_r")
         self.kb = Controller()
         self.backend = None
+        self._last_error = None          # текст последней ошибки загрузки/записи (для UI)
 
         self._recording = False
         self._transcribing = False
@@ -68,9 +73,11 @@ class DictationApp:
     @staticmethod
     def _print_state(state):
         msg = {"loading": "Загружаю модель (первый запуск ~5-10 c, не прерывай)...",
+               "downloading": "Скачиваю модель (первый запуск, может занять минуты)...",
                "idle": None,
                "recording": "● запись...",
-               "transcribing": "⏳ распознаю..."}.get(state)
+               "transcribing": "⏳ распознаю...",
+               "error": "⚠ ошибка (см. stderr)"}.get(state)
         if msg:
             print(msg, flush=True)
 
@@ -82,22 +89,33 @@ class DictationApp:
 
     # ── загрузка модели ──────────────────────────────────────
     def load_model(self):
+        """Грузит модель. При ЛЮБОМ сбое (нет сети при докачке, OOM, битая модель,
+        device='cuda' без GPU) НЕ виснет в loading: обнуляет backend, переводит UI
+        в 'error' с текстом причины и пробрасывает исключение наверх."""
         import backends
         import model_store
-        self.backend = backends.select_backend(self.cfg)
-        mid = self.backend.model_id
-        if mid and not model_store.is_cached(mid):
-            self._set_state("downloading")
-            model_store.ensure_downloaded(
-                mid, on_progress=lambda m: print(
-                    f"Скачиваю модель '{m}' (первый запуск, может занять минуты)…",
-                    flush=True))
-        self._set_state("loading")
-        t0 = time.perf_counter()
-        self.backend.load()
-        print(f"Модель '{mid or self.backend.name}' на {self.backend.device_label} "
-              f"за {time.perf_counter() - t0:.1f} c.", flush=True)
-        self._set_state("idle")
+        try:
+            self.backend = backends.select_backend(self.cfg)
+            mid = self.backend.model_id
+            if mid and not model_store.is_cached(mid):
+                self._set_state("downloading")
+                model_store.ensure_downloaded(
+                    mid, on_progress=lambda m: print(
+                        f"Скачиваю модель '{m}' (первый запуск, может занять минуты)…",
+                        flush=True))
+            self._set_state("loading")
+            t0 = time.perf_counter()
+            self.backend.load()
+            print(f"Модель '{mid or self.backend.name}' на {self.backend.device_label} "
+                  f"за {time.perf_counter() - t0:.1f} c.", flush=True)
+            self._last_error = None
+            self._set_state("idle")
+        except Exception as e:
+            self.backend = None
+            self._last_error = str(e)
+            print(f"[load_model] не смог загрузить модель: {e}", file=sys.stderr)
+            self._set_state("error")
+            raise
 
     # ── запись ───────────────────────────────────────────────
     def start_rec(self):
@@ -113,9 +131,19 @@ class DictationApp:
                 rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
                 self.on_level(rms)
 
-        self._stream = sd.InputStream(samplerate=self.cfg.sample_rate, channels=1,
-                                      dtype="float32", callback=cb)
-        self._stream.start()
+        # старт стрима может упасть (занятое/отсутствующее устройство, PortAudio):
+        # откатываем флаг, иначе _recording залипнет True и запись больше не запустится
+        try:
+            self._stream = sd.InputStream(samplerate=self.cfg.sample_rate, channels=1,
+                                          dtype="float32", callback=cb)
+            self._stream.start()
+        except Exception as e:
+            self._recording = False
+            self._stream = None
+            self._last_error = str(e)
+            print(f"[start_rec] не смог открыть микрофон: {e}", file=sys.stderr)
+            self._set_state("error")
+            return
         self._set_state("recording")
 
     def stop_and_transcribe(self):
@@ -148,8 +176,10 @@ class DictationApp:
         c = self.cfg
         t0 = time.perf_counter()
         segments, info = self.backend.transcribe(audio, c)
-        # вторичный страж: на не-речи language_probability валится (~0.2)
-        if c.min_language_probability and info.language_probability < c.min_language_probability:
+        # вторичный страж: на не-речи language_probability валится (~0.2).
+        # is not None — другой бэкенд может не отдать вероятность (контракт не обязывает)
+        lp = info.language_probability
+        if c.min_language_probability and lp is not None and lp < c.min_language_probability:
             print(f"[filter] подавлено: lang={info.language} "
                   f"p={info.language_probability:.2f} < {c.min_language_probability}", flush=True)
             return ""
@@ -160,8 +190,8 @@ class DictationApp:
         )
         text = postprocess.join_text(texts)
         dt = time.perf_counter() - t0
-        print(f"[{dt:.2f}s, lang={info.language} p={info.language_probability:.2f}]",
-              flush=True)
+        p_str = f"{lp:.2f}" if lp is not None else "—"
+        print(f"[{dt:.2f}s, lang={info.language} p={p_str}]", flush=True)
         return text
 
     # ── вставка в активное окно ──────────────────────────────
@@ -228,7 +258,10 @@ class DictationApp:
     def start(self):
         """Грузит модель (если ещё нет) и запускает слушатель клавиш. Не блокирует."""
         if self.backend is None:
-            self.load_model()
+            try:
+                self.load_model()
+            except Exception:
+                return        # состояние уже 'error'; слушатель не запускаем (нечем распознавать)
         mode_hint = ("нажми хоткей — старт, нажми снова — стоп"
                      if self.cfg.mode == "toggle" else "держи хоткей и говори")
         print(f"Готово. Режим: {self.cfg.mode} ({self.cfg.hotkey}). "
