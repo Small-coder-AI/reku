@@ -27,6 +27,27 @@ Ctrl), скажи фразу, отпусти. Текст вставится по
 
 `tray.py` (старый трей на pystray) заменён на `gui.py` — оставлен как legacy.
 
+## Сборка .exe (переносимый, в автозапуск)
+
+```powershell
+.\build.ps1 -Clean              # PyInstaller --onedir --windowed -> dist\whisper_ptt\
+.\build.ps1 -Clean -Installer   # + setup.exe (Inno Setup) -> installer\whisper_ptt-setup.exe
+.\.venv\Scripts\python.exe test_frozen_smoke.py   # проверка: GPU реально работает в сборке
+```
+
+Результат — `dist\whisper_ptt\whisper_ptt.exe` (двойной клик, иконка в трее). Модель
+(~3 ГБ) **не вшита** — качается при первом запуске в `%APPDATA%\whisper_ptt\models\`.
+
+**Инсталлятор** (`whisper_ptt.iss`, Inno Setup, per-user — без админ-прав): `whisper_ptt-setup.exe`
+ставит в `%LOCALAPPDATA%\Programs\whisper_ptt`, делает ярлык в Пуске (+ опц. рабочий стол),
+опц. автозапуск (на установленный exe) и деинсталлятор. Нужен Inno Setup:
+`winget install JRSoftware.InnoSetup`.
+Главный риск сборки — CUDA-DLL: `cuda_setup.py` во frozen добавляет `_internal\nvidia\*\bin`
+в PATH до импорта faster-whisper; `test_frozen_smoke.py` проверяет, что `device=cuda`
+(а не тихий CPU-фолбэк). **Автозапуск** — чекбокс «Запускать при старте Windows» в
+настройках (пишет в `HKCU\…\Run` путь к `.exe`). Файлы сборки: `whisper_ptt.spec`,
+`build.ps1`, `make_ico.py`, `autostart.py`, `test_frozen_smoke.py`.
+
 ## Настройка — `config.json`
 
 Создаётся при первом запуске. Ключевое:
@@ -36,14 +57,23 @@ Ctrl), скажи фразу, отпусти. Текст вставится по
 | `model` / `compute_type` | `large-v3` / `float16` | какую модель грузить (тут меняешь модель) |
 | `hotkey` | `ctrl_r` | имя клавиши pynput (`ctrl_r`, `f9`, …) или один символ |
 | `mode` | `ptt` | `ptt` — зажим; `toggle` — нажал/нажал |
-| `language` | `""` (авто) | `"ru"` / `"en"` — зафиксировать язык |
+| `theme` | `system` | `system` (за темой Windows) / `dark` / `light` |
+| `language` | `"ru"` | `"ru"` фиксирует язык (меньше латиницы внутри слов); `""` — авто |
+| `initial_prompt` | русский якорь | смещает декодер к кириллице; держи русским, термины — в `hotwords` |
+| `hotwords` | словарь терминов | бренды/термины через запятую (GitHub, OData, 1С…) — точечный биас |
 | `beam_size` | `5` | `1` быстрее, `5` точнее |
 | `vad_filter` | `true` | режет тишину/шум — **главная** защита от галлюцинаций |
 | `condition_on_previous_text` | `false` | `false` = меньше петель-повторов |
 | `no_repeat_ngram_size` | `3` | запрет повтора n-грамм при декоде |
-| `drop_hallucinations` | `true` | резать фирменные фантомы Whisper (блок-лист в postprocess.py) |
+| `drop_hallucinations` | `true` | резать многословные титры-фантомы Whisper (блок-лист в postprocess.py) |
 | `min_language_probability` | `0.0` | `>0` (напр. 0.4) — глушить вывод, если язык распознан неуверенно (вероятно не речь) |
 | `insert_method` | `paste` | `paste` (буфер+Ctrl+V) или `type` (посимвольно) |
+
+**Латиница внутри русских слов** лечится связкой `language="ru"` + русский `initial_prompt`
++ термины в `hotwords` (см. `ab_test.py` — сравнивает конфиги на одном дубле голоса и
+печатает «% смешанных слов»). **Тема** переключается в настройках на лету; `system`
+следует Windows. Если модель не загрузилась (нет сети/устройства) — окно показывает
+**«Ошибка»** с причиной, а не виснет в «Загрузке».
 
 Трей-меню тоже переключает `mode` и `language` на лету (пишет в config.json).
 
