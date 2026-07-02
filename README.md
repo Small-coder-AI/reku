@@ -25,8 +25,6 @@
 Ctrl), скажи фразу, отпусти. Текст вставится по курсору. **Держи запущенным один
 инстанс** (gui.py *или* dictate.py) — каждый грузит свою копию модели в 8 ГБ VRAM.
 
-`tray.py` (старый трей на pystray) заменён на `gui.py` — оставлен как legacy.
-
 ## Сборка .exe (переносимый, в автозапуск)
 
 ```powershell
@@ -85,7 +83,6 @@ Ctrl), скажи фразу, отпусти. Текст вставится по
 - `config.py` / `config.json` — настройки.
 - `postprocess.py` — фильтр галлюцинаций (чистые функции).
 - `cuda_setup.py` — кладёт nvidia-DLL в PATH (см. ниже). **Импортируется первым.**
-- `tray.py` — legacy-трей на pystray (заменён `gui.py`).
 - `requirements.txt` (верхнеуровневые пины) / `requirements.lock.txt` (полный freeze).
 - `diag.py`, `diag_halluc.py` — диагностика GPU и галлюцинаций.
 - `test_postprocess.py`, `selftest_pipeline.py`, `smoke_gui.py` — тесты.
