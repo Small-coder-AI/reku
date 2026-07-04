@@ -24,10 +24,13 @@ import gui_theme as T
 from gui_widgets import MicOrb, WaveformStrip, _c
 
 # карты для комбобоксов настроек
-MODELS = ["large-v3", "large-v2", "medium", "small", "base", "tiny"]
-COMPUTES = ["float16", "int8_float16", "int8", "float32"]
-DEVICES = [("Авто", "auto"), ("GPU (CUDA)", "cuda"), ("CPU", "cpu"),
-           ("API (облако)", "api")]
+MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
+# "auto" — валидное значение конфига (дефолт); без него «применить настройки»
+# молча подменяло compute_type на float16 и зря перегружало модель
+COMPUTES = ["auto", "float16", "int8_float16", "int8", "float32"]
+DEVICES = [("Авто", "auto"), ("GPU (CUDA)", "cuda"),
+           ("Intel GPU (OpenVINO)", "igpu"), ("Intel NPU (эксперимент)", "npu"),
+           ("CPU", "cpu"), ("API (облако)", "api")]
 HOTKEYS = [("Right Ctrl", "ctrl_r"), ("Left Ctrl", "ctrl_l"),
            ("Right Alt", "alt_r"), ("Caps Lock", "caps_lock"),
            ("Right Shift", "shift_r"), ("F8", "f8"), ("F9", "f9")]
@@ -40,6 +43,17 @@ class Bridge(QObject):
     stateChanged = Signal(str)
     resultReady = Signal(str)
     levelChanged = Signal(float)
+
+
+def _safe_engine_call(fn, bridge):
+    """Зов метода движка в фоновом потоке: ошибка -> статус в UI, а не
+    молчаливая смерть потока (иначе окно вечно висит на «Скачиваю…»)."""
+    try:
+        fn()
+    except Exception as e:
+        print(f"[engine] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        if bridge is not None:
+            bridge.stateChanged.emit(f"ошибка: {str(e)[:120]}")
 
 
 # ── заголовок окна (перетаскивание + кнопки) ─────────────────
@@ -363,7 +377,9 @@ class MainWindow(QWidget):
         if self.engine and (c.model, c.device, c.compute_type) != old:
             import threading
             self.set_state("loading")
-            threading.Thread(target=self.engine.reload_model, daemon=True).start()
+            threading.Thread(
+                target=lambda: _safe_engine_call(self.engine.reload_model, self.bridge),
+                daemon=True).start()
 
     def hide_to_tray(self):
         self.hide()
@@ -455,7 +471,8 @@ def main():
     bridge.stateChanged.connect(on_tray_state)
 
     win.show()
-    threading.Thread(target=engine.start, daemon=True).start()
+    threading.Thread(target=lambda: _safe_engine_call(engine.start, bridge),
+                     daemon=True).start()
     sys.exit(app.exec())
 
 
