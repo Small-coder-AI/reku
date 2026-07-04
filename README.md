@@ -83,6 +83,10 @@ faster_whisper. Без этого `encode()` падает: `cublas64_12.dll cann
 ~2–3 с. VAD работает (Silero из faster-whisper), фильтры галлюцинаций
 работают; `min_language_probability` в этом пути НЕ действует (движок не
 сообщает уверенность в языке), decode — greedy (beam_size игнорируется).
+Скорость проверена на Arc 140T; на слабых iGPU (UHD 6xx и т.п.) large-v3
+может компилироваться/работать долго — тогда выбери `large-v3-turbo` или
+`small` в настройках. Если OpenVINO в auto-режиме не поднялся вовсе
+(драйвер/память) — приложение само откатывается на CPU + small.
 На машинах без NVIDIA пакеты `nvidia-*` можно не ставить
 (`grep -v '^nvidia-' requirements.txt`). Бенч скорости на своих фразах:
 `python bench_backends.py record`, затем `run` (отчёт в
