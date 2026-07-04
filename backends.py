@@ -37,12 +37,22 @@ def ov_lang_token(language):
     return f"<|{language}|>" if language else None
 
 
+def _compression_ratio(text: str) -> float:
+    """Как в faster-whisper: длина текста / длина его zlib-сжатия.
+    Зацикленный повтор жмётся сильно -> ratio высокий (порог фильтра 2.4)."""
+    import zlib
+    data = text.encode("utf-8")
+    return len(data) / len(zlib.compress(data)) if data else 0.0
+
+
 def chunks_to_segments(chunks):
     """result.chunks (WhisperPipeline) -> сегменты контракта faster-whisper.
-    Наш postprocess читает .text и .compression_ratio (у OV её нет -> 0.0)."""
+    Наш postprocess читает .text и .compression_ratio; OV его не отдаёт,
+    поэтому считаем сами — иначе фильтр «пересжатых» сегментов мёртв."""
     from types import SimpleNamespace
     return [SimpleNamespace(text=c.text, start=c.start_ts, end=c.end_ts,
-                            compression_ratio=0.0) for c in (chunks or [])]
+                            compression_ratio=_compression_ratio(c.text))
+            for c in (chunks or [])]
 
 
 def make_ov_info(language, duration):
