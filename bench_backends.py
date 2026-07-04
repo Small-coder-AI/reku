@@ -68,12 +68,122 @@ def record() -> None:
         i += 1
 
 
+# ── конфигурации бенча ──────────────────────────────────────────
+INITIAL_PROMPT = ("Claude Code, GitHub, Docker, 1С, "
+                  "faster-whisper, Postgres, OData.")
+LANG = "ru"
+
+# CT2 large-v3 исключена из матрицы: +3.1 ГБ докачки при слабом интернете,
+# на CPU она заведомо мимо критерия скорости (см. план Task 3). small
+# пропущена решением пользователя (2026-07-04). База сравнения CPU — turbo.
+CT2_MODELS = ["large-v3-turbo"]
+OV_REPOS = {
+    "large-v3-turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
+    "large-v3": "OpenVINO/whisper-large-v3-int8-ov",
+}
+N_RUNS = 2   # 1-й прогон = холодный (компиляция/кэши), 2-й = честная скорость
+
+
+def _bench_ct2(model_name: str, wavs: list) -> list[dict]:
+    """CPU-путь как в приложении: faster-whisper int8, VAD, beam 5."""
+    from faster_whisper import WhisperModel
+    from faster_whisper.utils import download_model
+    download_model(model_name)          # скачивание вне замера load
+    t0 = time.perf_counter()
+    m = WhisperModel(model_name, device="cpu", compute_type="int8")
+    load_s = time.perf_counter() - t0
+    rows = []
+    for path, audio in wavs:
+        times, text = [], ""
+        for _ in range(N_RUNS):
+            t0 = time.perf_counter()
+            segments, info = m.transcribe(
+                audio, language=LANG, beam_size=5, vad_filter=True,
+                initial_prompt=INITIAL_PROMPT,
+                condition_on_previous_text=False, no_repeat_ngram_size=3)
+            text = " ".join(s.text.strip() for s in segments)  # генератор: инференс тут
+            times.append(time.perf_counter() - t0)
+        rows.append(dict(engine=f"CPU-ct2/{model_name}", wav=os.path.basename(path),
+                         dur=len(audio) / SR, load=load_s,
+                         cold=times[0], warm=times[-1], text=text))
+    del m
+    return rows
+
+
+def _ensure_ov_model(repo: str) -> str:
+    """Качает OV-модель в раскладку model_store (та же папка, что у приложения).
+    snapshot_download сам докачивает недостающие файлы (возобновляемо)."""
+    import model_store
+    from huggingface_hub import snapshot_download
+    path = model_store.model_path(repo)
+    print(f"  модель {repo} -> {path}")
+    snapshot_download(repo, local_dir=path)
+    return path
+
+
+def _bench_ov(model_name: str, repo: str, wavs: list) -> list[dict]:
+    """iGPU-путь: OpenVINO GenAI WhisperPipeline. Эти вызовы — эталон для
+    OpenVINOBackend (Task 6): kwargs generate() проверяются здесь живьём."""
+    import openvino_genai
+    path = _ensure_ov_model(repo)
+    cache = os.path.join(config.data_dir(), "ov_cache")
+    os.makedirs(cache, exist_ok=True)
+    t0 = time.perf_counter()
+    pipe = openvino_genai.WhisperPipeline(path, "GPU", CACHE_DIR=cache)
+    load_s = time.perf_counter() - t0
+    rows = []
+    for path_w, audio in wavs:
+        times, text = [], ""
+        for _ in range(N_RUNS):
+            t0 = time.perf_counter()
+            result = pipe.generate(
+                audio.tolist(), language=f"<|{LANG}|>", task="transcribe",
+                return_timestamps=True, initial_prompt=INITIAL_PROMPT)
+            chunks = getattr(result, "chunks", None) or []
+            text = " ".join(c.text.strip() for c in chunks)
+            times.append(time.perf_counter() - t0)
+        rows.append(dict(engine=f"iGPU-ov/{model_name}", wav=os.path.basename(path_w),
+                         dur=len(audio) / SR, load=load_s,
+                         cold=times[0], warm=times[-1], text=text))
+    del pipe
+    return rows
+
+
+def run() -> None:
+    import glob
+    paths = sorted(glob.glob(os.path.join(AUDIO_DIR, "*.wav")))
+    if not paths:
+        print("Нет WAV. Сначала: python bench_backends.py record")
+        return
+    wavs = [(p, load_wav(p)) for p in paths]
+    rows = []
+    for name in CT2_MODELS:
+        print(f"\n=== CPU-ct2 / {name} ===")
+        rows += _bench_ct2(name, wavs)
+    for name, repo in OV_REPOS.items():
+        print(f"\n=== iGPU-ov / {name} ===")
+        rows += _bench_ov(name, repo, wavs)
+
+    lines = ["| движок/модель | wav | длит., с | загрузка, с | 1-й прогон, с | повтор, с | RTF | текст |",
+             "|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['engine']} | {r['wav']} | {r['dur']:.1f} | {r['load']:.1f} "
+                     f"| {r['cold']:.2f} | {r['warm']:.2f} | {r['warm'] / r['dur']:.2f} "
+                     f"| {r['text']} |")
+    table = "\n".join(lines)
+    print("\n" + table)
+    out = os.path.join(AUDIO_DIR, "bench_results.md")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(f"# Бенч {time.strftime('%Y-%m-%d %H:%M')}\n\n{table}\n")
+    print(f"\nСохранено: {out}")
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "record":
         record()
     elif cmd == "run":
-        print("run: см. Task 3")
+        run()
     else:
         print(__doc__)
 
