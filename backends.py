@@ -59,6 +59,11 @@ class Backend(ABC):
         """ID модели для докачки, либо None если докачка не нужна (напр. API)."""
         return None
 
+    @property
+    def model_kind(self) -> str:
+        """Вид модели для model_store.ensure_downloaded: 'ct2' | 'ov'."""
+        return "ct2"
+
     @abstractmethod
     def load(self):
         ...
