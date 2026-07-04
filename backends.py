@@ -17,6 +17,54 @@ HEAVY_MODELS = {
 }
 CPU_FALLBACK_MODEL = "small"
 
+# Готовые int8-модели OpenVINO на HF (проверено по HF API 2026-07-04).
+# Имя модели из конфига -> репо для скачивания.
+OV_MODEL_MAP = {
+    "large-v3": "OpenVINO/whisper-large-v3-int8-ov",
+    "large-v3-turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
+    "turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
+    "distil-large-v3": "OpenVINO/distil-whisper-large-v3-int8-ov",
+    "large-v2": "OpenVINO/whisper-large-v2-int8-ov",
+    "medium": "OpenVINO/whisper-medium-int8-ov",
+    "small": "OpenVINO/whisper-small-int8-ov",
+    "base": "OpenVINO/whisper-base-int8-ov",
+    "tiny": "OpenVINO/whisper-tiny-int8-ov",
+}
+
+
+def ov_lang_token(language):
+    """'ru' -> '<|ru|>' (формат WhisperPipeline); пустой язык -> None (авто)."""
+    return f"<|{language}|>" if language else None
+
+
+def chunks_to_segments(chunks):
+    """result.chunks (WhisperPipeline) -> сегменты контракта faster-whisper.
+    Наш postprocess читает .text и .compression_ratio (у OV её нет -> 0.0)."""
+    from types import SimpleNamespace
+    return [SimpleNamespace(text=c.text, start=c.start_ts, end=c.end_ts,
+                            compression_ratio=0.0) for c in (chunks or [])]
+
+
+def make_ov_info(language, duration):
+    """info контракта faster-whisper. ВАЖНО: WhisperPipeline не сообщает
+    уверенность в языке -> language_probability всегда 1.0, поэтому фильтр
+    min_language_probability в OV-пути не действует (осознанная деградация)."""
+    from types import SimpleNamespace
+    return SimpleNamespace(language=language or "", language_probability=1.0,
+                           duration=duration)
+
+
+def apply_vad(audio, sample_rate=16000):
+    """VAD-шаг для OV-пути: Silero из faster-whisper (он всё равно установлен
+    для CPU/CUDA). None = речи нет; иначе склейка речевых кусков."""
+    import numpy as np
+    from faster_whisper.vad import get_speech_timestamps, collect_chunks
+    chunks = get_speech_timestamps(audio, sampling_rate=sample_rate)
+    if not chunks:
+        return None
+    pieces, _ = collect_chunks(audio, chunks, sampling_rate=sample_rate)
+    return np.concatenate(pieces)
+
 
 def _cuda_available() -> bool:
     """Есть ли пригодный CUDA-GPU для CTranslate2. Любой сбой = нет GPU."""
@@ -114,21 +162,66 @@ class CTranslate2Backend(Backend):
 
 
 class OpenVINOBackend(Backend):
-    """Intel iGPU/NPU через OpenVINO. Заглушка — реализация в Фазе 2."""
+    """Intel iGPU/NPU через OpenVINO GenAI WhisperPipeline.
+
+    Модели — готовые int8 с HF (OV_MODEL_MAP), без конвертации на машине.
+    Вызовы generate() повторяют проверенные бенчем (bench_backends.py).
+    """
     name = "openvino"
 
-    def __init__(self, cfg):
-        self.cfg = cfg
+    def __init__(self, model, device):
+        self.model_name = model
+        self.device = device          # "igpu" | "npu"
+        self._pipe = None
 
     @property
     def device_label(self) -> str:
-        return "Intel (OpenVINO)"
+        return ("Intel NPU (OpenVINO)" if self.device == "npu"
+                else "Intel GPU (OpenVINO)")
+
+    @property
+    def model_id(self):
+        return OV_MODEL_MAP.get(self.model_name)
+
+    @property
+    def model_kind(self) -> str:
+        return "ov"
 
     def load(self):
-        raise NotImplementedError("OpenVINO-бэкенд — Фаза 2 (на ноуте Honor)")
+        rid = self.model_id
+        if rid is None:
+            raise ValueError(
+                f"модель {self.model_name!r} недоступна для Intel GPU/NPU; "
+                f"выбери одну из: {', '.join(sorted(set(OV_MODEL_MAP)))}")
+        import os
+        import openvino_genai       # лениво: на машинах без OV не импортируется
+        import model_store
+        cache = os.path.join(model_store._data_dir(), "ov_cache")
+        os.makedirs(cache, exist_ok=True)
+        dev = "NPU" if self.device == "npu" else "GPU"
+        props = {"CACHE_DIR": cache}
+        if self.device == "npu":
+            props["STATIC_PIPELINE"] = True   # требование WhisperPipeline на NPU
+        self._pipe = openvino_genai.WhisperPipeline(
+            model_store.model_path(rid), dev, **props)
 
     def transcribe(self, audio, cfg):
-        raise NotImplementedError("OpenVINO-бэкенд — Фаза 2 (на ноуте Honor)")
+        duration = len(audio) / 16000.0
+        if cfg.vad_filter:
+            audio = apply_vad(audio)
+            if audio is None:
+                return [], make_ov_info(cfg.language, duration)
+        kwargs = dict(task="transcribe", return_timestamps=True)
+        lang = ov_lang_token(cfg.language)
+        if lang:
+            kwargs["language"] = lang
+        if cfg.initial_prompt:
+            kwargs["initial_prompt"] = cfg.initial_prompt
+        # beam_size/no_repeat_ngram_size/condition_on_previous_text — CT2-специфика,
+        # в GenAI не пробрасываются: greedy-декод (качество подтверждено бенчем).
+        result = self._pipe.generate(audio.tolist(), **kwargs)
+        segments = chunks_to_segments(getattr(result, "chunks", None))
+        return segments, make_ov_info(cfg.language, duration)
 
 
 class ApiBackend(Backend):
