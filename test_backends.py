@@ -228,5 +228,58 @@ _b_cuda = select_backend(S(device="auto", compute_type="auto", model="small"),
 ok &= check("select: cuda найден -> ov-проба не звана",
             isinstance(_b_cuda, CTranslate2Backend) and _ov_calls == [])
 
+# ── cpu_fallback_backend: запасной CPU-бэкенд для auto при сбое OV ──
+from backends import cpu_fallback_backend
+
+_fb = cpu_fallback_backend(S(model="large-v3", compute_type="auto"))
+ok &= check("cpu_fallback: тяжёлая -> small/cpu/int8",
+            isinstance(_fb, CTranslate2Backend) and _fb.model_name == "small"
+            and _fb.device == "cpu" and _fb.compute_type == "int8")
+_fb2 = cpu_fallback_backend(S(model="base", compute_type="auto"))
+ok &= check("cpu_fallback: лёгкая не понижается", _fb2.model_name == "base")
+
+# ── dictate.load_model: auto + сбой OV -> фолбэк на CPU; явный igpu -> ошибка наружу ──
+import dictate
+import config as _config
+import model_store as _ms
+
+
+class _FailingOV(OpenVINOBackend):
+    def load(self):
+        raise RuntimeError("compile boom")
+
+
+class _OkCPU(CTranslate2Backend):
+    loads = []
+
+    def load(self):
+        _OkCPU.loads.append(self.model_name)
+
+
+_orig_select = backends.select_backend
+_orig_fb = backends.cpu_fallback_backend
+_orig_cached = _ms.is_cached
+backends.select_backend = lambda cfg, **kw: _FailingOV("large-v3", "igpu")
+backends.cpu_fallback_backend = lambda cfg: _OkCPU("small", "cpu", "int8")
+_ms.is_cached = lambda m: True
+try:
+    _app = dictate.DictationApp(_config.Config())        # device=auto
+    _app.load_model()
+    ok &= check("auto: OV упал -> CPU-фолбэк загружен",
+                isinstance(_app.backend, _OkCPU) and _OkCPU.loads == ["small"])
+
+    _cfg_igpu = _config.Config()
+    _cfg_igpu.device = "igpu"
+    _app2 = dictate.DictationApp(_cfg_igpu)
+    try:
+        _app2.load_model()
+        ok &= check("явный igpu: ошибка не глотается", False)
+    except RuntimeError:
+        ok &= check("явный igpu: ошибка не глотается", True)
+finally:
+    backends.select_backend = _orig_select
+    backends.cpu_fallback_backend = _orig_fb
+    _ms.is_cached = _orig_cached
+
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)

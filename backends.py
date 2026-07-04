@@ -275,6 +275,14 @@ class ApiBackend(Backend):
         raise NotImplementedError("API-бэкенд — Фаза 2 (опт-ин, аудио уходит в облако)")
 
 
+def cpu_fallback_backend(cfg):
+    """Запасной CPU-бэкенд, когда OpenVINO в auto-режиме не поднялся
+    (слабый/незнакомый iGPU, драйвер, нехватка памяти — спека Фазы 2,
+    «Обработка ошибок»). Тяжёлые модели понижаются до small, как в auto+cpu."""
+    mdl = CPU_FALLBACK_MODEL if cfg.model in HEAVY_MODELS else cfg.model
+    return CTranslate2Backend(model=mdl, device="cpu", compute_type="int8")
+
+
 def select_backend(cfg, *, cuda_probe=None, ov_probe=None):
     """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен).
     Пробы зовутся только в auto-режиме, ov-проба — только если CUDA нет."""
