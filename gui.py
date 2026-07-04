@@ -377,9 +377,26 @@ class MainWindow(QWidget):
         if self.engine and (c.model, c.device, c.compute_type) != old:
             import threading
             self.set_state("loading")
-            threading.Thread(
-                target=lambda: _safe_engine_call(self.engine.reload_model, self.bridge),
-                daemon=True).start()
+            threading.Thread(target=lambda: self._reload_with_rollback(old),
+                             daemon=True).start()
+
+    def _reload_with_rollback(self, old):
+        """reload_model в фоне; при ошибке — откатить model/device/compute_type
+        в config.json и поднять прежний рабочий бэкенд. Иначе нерабочий выбор
+        (нет такого устройства / модель не поднялась) застревает в конфиге,
+        и каждый следующий запуск приложения падает так же."""
+        import config as _cfg
+        try:
+            self.engine.reload_model()
+        except Exception as e:
+            print(f"[engine] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            c = self.cfg
+            c.model, c.device, c.compute_type = old
+            _cfg.save(c)
+            if self.bridge is not None:
+                self.bridge.stateChanged.emit(
+                    f"ошибка: {str(e)[:100]} — настройки откачены")
+            _safe_engine_call(self.engine.reload_model, self.bridge)  # прежний бэкенд
 
     def hide_to_tray(self):
         self.hide()
