@@ -66,6 +66,13 @@ def apply_vad(audio, sample_rate=16000):
     return np.concatenate(pieces)
 
 
+# Подстановка модели в АВТО-режиме на iGPU — результат ворот бенча
+# (docs/superpowers/specs/2026-07-04-phase2-openvino-igpu-design.md, «Порядок работ»).
+# Пустая карта: large-v3 на Arc 140T уложилась в критерий с запасом
+# (warm 1.2–2.0 с на фразах 11–24 с, bench_results.md 2026-07-04) — не понижаем.
+IGPU_AUTO_SUBSTITUTE = {}
+
+
 def _cuda_available() -> bool:
     """Есть ли пригодный CUDA-GPU для CTranslate2. Любой сбой = нет GPU."""
     try:
@@ -76,11 +83,25 @@ def _cuda_available() -> bool:
         return False
 
 
-def resolve_runtime(device, compute_type, model, *, cuda_available):
-    """Чистая функция: ('auto'|'cuda'|'cpu', compute, model) -> конкретные значения.
-    Понижение тяжёлой модели до small происходит ТОЛЬКО в auto-режиме при фолбэке на CPU."""
+def _ov_gpu_available() -> bool:
+    """Есть ли Intel GPU для OpenVINO. Любой сбой (нет пакета/драйвера) = нет."""
+    try:
+        import openvino
+        return "GPU" in openvino.Core().available_devices
+    except Exception:
+        return False
+
+
+def resolve_runtime(device, compute_type, model, *, cuda_available,
+                    ov_gpu_available=False):
+    """Чистая функция: ('auto'|'cuda'|'cpu'|'igpu'|'npu', compute, model) ->
+    конкретные значения. Авто-цепочка: cuda -> igpu -> cpu. Понижение модели —
+    ТОЛЬКО в auto: на cpu тяжёлые -> small, на igpu — по карте ворот бенча."""
     auto = (device == "auto")
-    dev = ("cuda" if cuda_available else "cpu") if auto else device
+    if auto:
+        dev = "cuda" if cuda_available else ("igpu" if ov_gpu_available else "cpu")
+    else:
+        dev = device
 
     comp = compute_type
     if comp in ("", "auto", None):
@@ -89,6 +110,8 @@ def resolve_runtime(device, compute_type, model, *, cuda_available):
     mdl = model
     if auto and dev == "cpu" and model in HEAVY_MODELS:
         mdl = CPU_FALLBACK_MODEL
+    if auto and dev == "igpu":
+        mdl = IGPU_AUTO_SUBSTITUTE.get(model, model)
 
     return dev, comp, mdl
 
@@ -242,11 +265,16 @@ class ApiBackend(Backend):
         raise NotImplementedError("API-бэкенд — Фаза 2 (опт-ин, аудио уходит в облако)")
 
 
-def select_backend(cfg, *, cuda_probe=None):
-    """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен)."""
+def select_backend(cfg, *, cuda_probe=None, ov_probe=None):
+    """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен).
+    Пробы зовутся только в auto-режиме, ov-проба — только если CUDA нет."""
     if cfg.device == "api":
         return ApiBackend(cfg)
-    probe = cuda_probe or _cuda_available
+    cuda = (cuda_probe or _cuda_available)() if cfg.device == "auto" else False
+    ov = ((ov_probe or _ov_gpu_available)()
+          if (cfg.device == "auto" and not cuda) else False)
     dev, comp, mdl = resolve_runtime(cfg.device, cfg.compute_type, cfg.model,
-                                     cuda_available=probe())
+                                     cuda_available=cuda, ov_gpu_available=ov)
+    if dev in ("igpu", "npu"):
+        return OpenVINOBackend(model=mdl, device=dev)
     return CTranslate2Backend(model=mdl, device=dev, compute_type=comp)
