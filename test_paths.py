@@ -48,5 +48,45 @@ ok &= check("model_path безопасит '/'",
 ok &= check("is_cached=False для несуществующей",
             model_store.is_cached("small") is False)
 
+# ── model_store: OV-модели (маркер + скачивание через snapshot_download) ──
+_ov_id = "OpenVINO/whisper-large-v3-int8-ov"
+_ov_dir = model_store.model_path(_ov_id)
+
+# is_cached видит OV-маркер .download_complete
+os.makedirs(_ov_dir, exist_ok=True)
+open(os.path.join(_ov_dir, ".download_complete"), "w").close()
+ok &= check("is_cached=True по OV-маркеру", model_store.is_cached(_ov_id) is True)
+
+# is_cached видит model.bin (CT2, существующее поведение)
+_ct2_dir = model_store.model_path("small")
+os.makedirs(_ct2_dir, exist_ok=True)
+open(os.path.join(_ct2_dir, "model.bin"), "w").close()
+ok &= check("is_cached=True по model.bin", model_store.is_cached("small") is True)
+
+# ensure_downloaded(kind="ov"): зовёт huggingface_hub.snapshot_download и пишет маркер
+import huggingface_hub
+_calls = []
+_orig_sd = huggingface_hub.snapshot_download
+
+
+def _fake_sd(repo, local_dir):
+    _calls.append((repo, local_dir))
+    os.makedirs(local_dir, exist_ok=True)
+
+
+huggingface_hub.snapshot_download = _fake_sd
+try:
+    _new_id = "OpenVINO/whisper-large-v3-turbo-int8-ov"
+    p = model_store.ensure_downloaded(_new_id, kind="ov")
+    ok &= check("ensure_downloaded(ov) зовёт snapshot_download",
+                bool(_calls) and _calls[0][0] == _new_id)
+    ok &= check("ensure_downloaded(ov) пишет маркер",
+                os.path.isfile(os.path.join(p, ".download_complete")))
+    ok &= check("повторный вызов не качает снова (кэш)",
+                model_store.ensure_downloaded(_new_id, kind="ov") == p
+                and len(_calls) == 1)
+finally:
+    huggingface_hub.snapshot_download = _orig_sd
+
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)

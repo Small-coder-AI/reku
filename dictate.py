@@ -89,7 +89,8 @@ class DictationApp:
         if mid and not model_store.is_cached(mid):
             self._set_state("downloading")
             model_store.ensure_downloaded(
-                mid, on_progress=lambda m: print(
+                mid, kind=self.backend.model_kind,
+                on_progress=lambda m: print(
                     f"Скачиваю модель '{m}' (первый запуск, может занять минуты)…",
                     flush=True))
         self._set_state("loading")
