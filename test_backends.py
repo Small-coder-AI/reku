@@ -72,7 +72,17 @@ _segs = chunks_to_segments(_chunks)
 ok &= check("chunks_to_segments: 2 сегмента", len(_segs) == 2)
 ok &= check("chunks_to_segments: контракт .text/.start/.end/.compression_ratio",
             _segs[0].text == " Привет " and _segs[0].start == 0.0
-            and _segs[1].end == 2.0 and _segs[0].compression_ratio == 0.0)
+            and _segs[1].end == 2.0 and _segs[0].compression_ratio > 0.0)
+
+# compression_ratio считается честно (zlib, как в faster-whisper):
+# зацикленный мусор жмётся сильно -> ratio высокий -> фильтр postprocess сработает
+_loop = chunks_to_segments([S(text="и так " * 50, start_ts=0.0, end_ts=20.0)])
+_norm = chunks_to_segments([S(text="обычная осмысленная фраза без повторов",
+                              start_ts=0.0, end_ts=3.0)])
+ok &= check("compression_ratio: зацикленный текст > 2.4 (порог фильтра)",
+            _loop[0].compression_ratio > 2.4)
+ok &= check("compression_ratio: обычный текст < 2.4",
+            0.0 < _norm[0].compression_ratio < 2.4)
 ok &= check("chunks_to_segments: пусто", chunks_to_segments([]) == [])
 ok &= check("chunks_to_segments: None", chunks_to_segments(None) == [])
 
