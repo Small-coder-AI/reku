@@ -23,6 +23,10 @@ nvidia-cublas-cu12==12.9.2.10
 nvidia-cuda-nvrtc-cu12==12.9.86
 nvidia-cudnn-cu12==9.23.0.39
 onnxruntime==1.26.0
+openvino==2026.2.1
+openvino-genai==2026.2.1.0
+openvino-telemetry==2025.2.0
+openvino-tokenizers==2026.2.1.0
 packaging==26.2
 pillow==12.2.0
 protobuf==7.35.0
