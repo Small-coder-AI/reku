@@ -48,8 +48,9 @@ except NotImplementedError:
     ok &= check("ApiBackend.load кидает NotImplementedError", True)
 
 # select_backend: локальный путь -> CTranslate2Backend с разрешённым устройством
+# (ov-проба тоже мокается: на машине с Intel GPU настоящая вернула бы True)
 cfg_loc = S(device="auto", compute_type="auto", model="large-v3")
-b2 = select_backend(cfg_loc, cuda_probe=lambda: False)
+b2 = select_backend(cfg_loc, cuda_probe=lambda: False, ov_probe=lambda: False)
 ok &= check("auto+no-cuda -> CTranslate2Backend/cpu",
             isinstance(b2, CTranslate2Backend) and b2.device == "cpu"
             and b2.model_id == "small")
@@ -152,6 +153,70 @@ _cfg_vad = S(language="ru", vad_filter=True, initial_prompt="", beam_size=5,
 _segs3, _info3 = _ovb3.transcribe(np.zeros(16000, dtype=np.float32), _cfg_vad)
 ok &= check("OV.transcribe: VAD-гейт (тишина -> пусто, generate не зван)",
             _segs3 == [] and _info3.duration == 1.0)
+
+# ── маршрутизация igpu/npu ────────────────────────────────────
+from backends import IGPU_AUTO_SUBSTITUTE, HEAVY_MODELS
+
+# auto: cuda главнее igpu
+ok &= check("auto+cuda(+ov) -> cuda",
+            resolve_runtime("auto", "auto", "large-v3",
+                            cuda_available=True, ov_gpu_available=True)
+            == ("cuda", "float16", "large-v3"))
+
+# auto: нет cuda, есть Intel GPU -> igpu; подстановка модели по карте ворот
+_expected_mdl = IGPU_AUTO_SUBSTITUTE.get("large-v3", "large-v3")
+ok &= check("auto+no-cuda+ov -> igpu (+карта ворот)",
+            resolve_runtime("auto", "auto", "large-v3",
+                            cuda_available=False, ov_gpu_available=True)
+            == ("igpu", "int8", _expected_mdl))
+
+# auto: лёгкая модель на igpu не трогается
+ok &= check("auto+ov+light -> igpu/base",
+            resolve_runtime("auto", "auto", "base",
+                            cuda_available=False, ov_gpu_available=True)
+            == ("igpu", "int8", "base"))
+
+# карта подстановки понижает только тяжёлые
+ok &= check("IGPU_AUTO_SUBSTITUTE только про HEAVY_MODELS",
+            set(IGPU_AUTO_SUBSTITUTE) <= HEAVY_MODELS)
+
+# auto: ничего нет -> cpu + понижение (существующее поведение, без нового kwarg)
+ok &= check("auto+ничего -> cpu/small (совместимость)",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=False)
+            == ("cpu", "int8", "small"))
+
+# явный igpu: probe не нужен, модель не понижается
+ok &= check("явный igpu без понижения",
+            resolve_runtime("igpu", "auto", "large-v3", cuda_available=False)
+            == ("igpu", "int8", "large-v3"))
+
+# явный npu
+ok &= check("явный npu",
+            resolve_runtime("npu", "auto", "large-v3", cuda_available=False)
+            == ("npu", "int8", "large-v3"))
+
+# select_backend: no-cuda + ov -> OpenVINOBackend igpu
+_b_ov = select_backend(S(device="auto", compute_type="auto", model="base"),
+                       cuda_probe=lambda: False, ov_probe=lambda: True)
+ok &= check("select: auto -> OpenVINOBackend/igpu",
+            isinstance(_b_ov, OpenVINOBackend) and _b_ov.device == "igpu"
+            and _b_ov.model_name == "base")
+
+# select_backend: явный igpu не зовёт пробы
+_probe_calls = []
+_b_igpu = select_backend(S(device="igpu", compute_type="auto", model="large-v3"),
+                         cuda_probe=lambda: _probe_calls.append("cuda") or False,
+                         ov_probe=lambda: _probe_calls.append("ov") or False)
+ok &= check("select: явный igpu без проб",
+            isinstance(_b_igpu, OpenVINOBackend) and _probe_calls == [])
+
+# select_backend: cuda есть -> ov-проба не зовётся (ленивость)
+_ov_calls = []
+_b_cuda = select_backend(S(device="auto", compute_type="auto", model="small"),
+                         cuda_probe=lambda: True,
+                         ov_probe=lambda: _ov_calls.append(1) or True)
+ok &= check("select: cuda найден -> ov-проба не звана",
+            isinstance(_b_cuda, CTranslate2Backend) and _ov_calls == [])
 
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)
