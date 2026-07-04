@@ -55,12 +55,9 @@ ok &= check("auto+no-cuda -> CTranslate2Backend/cpu",
             and b2.model_id == "small")
 ok &= check("device_label для cpu", b2.device_label == "CPU")
 
-# OpenVINOBackend.load -> NotImplementedError
-try:
-    OpenVINOBackend(S()).load()
-    ok &= check("OpenVINOBackend.load кидает NotImplementedError", False)
-except NotImplementedError:
-    ok &= check("OpenVINOBackend.load кидает NotImplementedError", True)
+# model_kind: CT2 -> "ct2" (вид модели для model_store.ensure_downloaded)
+ok &= check("CTranslate2Backend.model_kind == ct2",
+            CTranslate2Backend("small", "cpu", "int8").model_kind == "ct2")
 
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)
