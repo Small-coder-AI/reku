@@ -12,6 +12,7 @@ find_spec("nvidia") во frozen ничего не найдёт.
 (build.ps1 делает Push-Location в корень репо перед вызовом — см. packaging/build.ps1)
 """
 import os
+import importlib.util
 from PyInstaller.utils.hooks import (
     collect_all, collect_dynamic_libs, collect_data_files, collect_submodules,
 )
@@ -52,6 +53,19 @@ datas += d; binaries += b; hiddenimports += h
 # ── onnxruntime: provider-DLL грузятся динамически ──
 d, b, h = collect_all("onnxruntime")
 datas += d; binaries += b; hiddenimports += h
+
+# ── OpenVINO (Intel iGPU/NPU): плагины девайсов (openvino/libs/*_plugin.dll),
+# ir_frontend и openvino_tokenizers/lib/*.dll грузятся динамически через Core —
+# анализ импортов PyInstaller видит только openvino.dll (прямую зависимость
+# .pyd) и НЕ тащит остальное. Без collect_all OV-путь в сборке мёртв: Core
+# падает с «Cannot load library "openvino_tokenizers.dll": 126» (ревью PR #3).
+# На cuda-профиле venv этих пакетов нет — тогда пропускаем.
+for pkg in ("openvino", "openvino_genai", "openvino_tokenizers"):
+    if importlib.util.find_spec(pkg) is not None:
+        d, b, h = collect_all(pkg)
+        # .lib (import-библиотеки для линковки, ~8 МБ) рантайму не нужны
+        d = [x for x in d if not x[0].lower().endswith(".lib")]
+        datas += d; binaries += b; hiddenimports += h
 
 # ── sounddevice: одиночный модуль (не пакет). PortAudio DLL лежит в
 # _sounddevice_data/portaudio-binaries и грузится cffi относительно этой папки,
