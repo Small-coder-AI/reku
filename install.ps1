@@ -20,6 +20,21 @@ function Invoke-Uninstall {
     Remove-Item (Join-Path $StartMenu "$AppName.lnk") -ErrorAction SilentlyContinue
     Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "$AppName.lnk") -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $RunKey -Name $AppName -ErrorAction SilentlyContinue
+
+    # До фикса data_dir() (reku/config.py) инсталляции из исходников хранили модели
+    # (~3 ГБ) прямо в $InstallDir\models, а не в %APPDATA%\Reku. Спрашиваем отдельно,
+    # чтобы бланкетный Remove-Item ниже не снёс их молча (guard для старых установок).
+    $legacyModels = Join-Path $InstallDir "models"
+    if (Test-Path $legacyModels) {
+        $ans = Read-Host "Найдены модели старого формата в $legacyModels. Удалить вместе с программой? [y/N]"
+        if ($ans -ne "y") {
+            $backup = Join-Path (Split-Path $InstallDir -Parent) "$AppName-models-backup"
+            Remove-Item -Recurse -Force $backup -ErrorAction SilentlyContinue
+            Move-Item $legacyModels $backup
+            Write-Host "    Модели сохранены: $backup"
+        }
+    }
+
     Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
     $data = Join-Path $env:APPDATA $AppName
     if (Test-Path $data) {
@@ -33,11 +48,11 @@ if ($Uninstall) { Invoke-Uninstall; return }
 # ── 1. Железо ────────────────────────────────────────────────
 Write-Step "Определяю железо..."
 $gpus = (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue).Name -join "; "
-$profile = "cpu"
-if ($gpus -match "NVIDIA") { $profile = "cuda" }
-elseif ($gpus -match "Intel.*(Arc|Iris|Graphics)") { $profile = "intel" }
+$hwProfile = "cpu"
+if ($gpus -match "NVIDIA") { $hwProfile = "cuda" }
+elseif ($gpus -match "Intel.*(Arc|Iris|Graphics)") { $hwProfile = "intel" }
 Write-Host "    Видеоадаптеры: $gpus"
-Write-Host "    Профиль установки: $profile"
+Write-Host "    Профиль установки: $hwProfile"
 
 # ── 2. Python 3.12 ───────────────────────────────────────────
 Write-Step "Ищу Python 3.12..."
@@ -49,6 +64,9 @@ foreach ($cand in @("py -3.12", "python")) {
     } catch {}
 }
 if (-not $py) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "winget не найден — поставь Python 3.12 с python.org и запусти скрипт снова."
+    }
     Write-Step "Python 3.12 не найден — ставлю через winget (тихо)..."
     winget install --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) { throw "winget не смог поставить Python. Поставь Python 3.12 с python.org и запусти скрипт снова." }
@@ -60,6 +78,11 @@ Write-Host "    Python: $(& $py.Split()[0] $py.Split()[1..99] --version)"
 # ── 3. Код ───────────────────────────────────────────────────
 Write-Step "Получаю код в $InstallDir..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+# Copy-Item -Recurse при существующем каталоге СЛИВАЕТ дерево (перезаписывает
+# одноимённые файлы, но не удаляет исчезнувшие в новой версии) — при обновлении
+# старые модули reku/ иначе оставались бы висеть. Заменяем каталог целиком, а
+# не сливаем; .venv и models — соседи $InstallDir\reku, их это не трогает.
+Remove-Item -Recurse -Force (Join-Path $InstallDir "reku") -ErrorAction SilentlyContinue
 $codeItems = @("reku", "scripts", "packaging", "requirements.txt", "requirements.lock.txt")
 if ($SourcePath) {
     foreach ($it in $codeItems) { Copy-Item -Recurse -Force (Join-Path $SourcePath $it) $InstallDir }
@@ -79,10 +102,10 @@ if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
     & $py.Split()[0] $py.Split()[1..99] -m venv $venv
 }
 $vpy = Join-Path $venv "Scripts\python.exe"
-Write-Step "Ставлю зависимости (профиль $profile; это займёт несколько минут)..."
+Write-Step "Ставлю зависимости (профиль $hwProfile; это займёт несколько минут)..."
 $req = Get-Content (Join-Path $InstallDir "requirements.txt")
-if ($profile -ne "cuda") { $req = $req | Where-Object { $_ -notmatch "^nvidia-" } }
-if ($profile -eq "cpu")  { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
+if ($hwProfile -ne "cuda") { $req = $req | Where-Object { $_ -notmatch "^nvidia-" } }
+if ($hwProfile -eq "cpu")  { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
 $reqFile = Join-Path $InstallDir "requirements.effective.txt"
 $req | Set-Content $reqFile -Encoding UTF8
 & $vpy -m pip install --upgrade pip --quiet
@@ -108,7 +131,13 @@ if ($desk -ne "n") { New-Shortcut (Join-Path ([Environment]::GetFolderPath("Desk
 # ── 6. Автозапуск ────────────────────────────────────────────
 $auto = Read-Host "Запускать $AppName при старте Windows? [y/N]"
 if ($auto -eq "y") {
-    Set-ItemProperty -Path $RunKey -Name $AppName -Value "`"$pyw`" -m reku"
+    # HKCU Run стартует процесс с cwd=System32 (не $InstallDir), поэтому голый
+    # "-m reku" не находит пакет (он скопирован, а не pip-installed — reku не
+    # резолвится, если его родитель не в sys.path). Явно подставляем InstallDir
+    # через -c, как dev-режим reku/autostart.py (_exe_command) — не зависит от
+    # cwd процесса автозапуска.
+    $autostartCmd = '"{0}" -c "import sys; sys.path.insert(0, r''{1}''); from reku.gui import main; main()"' -f $pyw, $InstallDir
+    Set-ItemProperty -Path $RunKey -Name $AppName -Value $autostartCmd
     Write-Host "    Автозапуск включён (можно выключить в настройках $AppName)."
 }
 
