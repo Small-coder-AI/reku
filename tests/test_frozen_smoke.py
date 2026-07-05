@@ -1,13 +1,23 @@
 r"""Смоук-тест собранного .exe: проверяет, что GPU реально работает,
-а не молча сфолбэчился на CPU из-за непойманной CUDA-DLL.
+а не молча сфолбэчился на CPU из-за непойманной DLL.
 
 Запуск ПОСЛЕ build.ps1 (из корня репозитория):
     .venv\Scripts\python.exe tests\test_frozen_smoke.py
 
+Какой стек проверять — переменная REKU_SMOKE_DEVICE (по умолчанию cuda):
+    cuda — NVIDIA-профиль: ct2 видит CUDA, модель на device='cuda';
+    igpu — Intel-профиль (OpenVINO): модель на device='igpu' — ловит
+           недособранный OV-рантайм (плагины девайсов/openvino_tokenizers.dll
+           PyInstaller без collect_all не тащит — ревью PR #3).
+В %APPDATA%\Reku\config.json при этом должен стоять тот же device
+(селфтест грузит модель по обычному конфигу). Чтобы не трогать боевой
+конфиг, можно подменить APPDATA на песочный каталог — тест и .exe
+смотрят в одну и ту же переменную окружения.
+
 Что делает: запускает dist\Reku\Reku.exe с переменной
 REKU_SELFTEST=1 — в этом режиме gui.main() НЕ поднимает UI, а
 выполняет короткую самопроверку и пишет результат в %APPDATA%\Reku\
-selftest.json, затем выходит. Тест читает json и проверяет device == 'cuda'.
+selftest.json, затем выходит. Тест читает json и сверяет device.
 
 ВНИМАНИЕ: чтобы это работало, в gui.main() в начале нужен хук self-test
 (см. фрагмент в плане). Без хука тест запустит обычный GUI — тогда проверяй
@@ -23,6 +33,7 @@ import subprocess
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = os.path.join(ROOT, "dist", "Reku", "Reku.exe")
 RESULT = os.path.join(os.environ.get("APPDATA", ""), "Reku", "selftest.json")
+TARGET = os.environ.get("REKU_SMOKE_DEVICE", "cuda")   # cuda | igpu
 
 
 def main():
@@ -42,10 +53,13 @@ def main():
         data = json.load(f)
     print("self-test:", json.dumps(data, ensure_ascii=False))
 
-    assert data.get("cuda_device_count", 0) > 0, "ct2 не видит CUDA-устройств (DLL не пойманы!)"
-    assert data.get("device") == "cuda", f"модель НЕ на GPU: device={data.get('device')!r} (CPU-фолбэк)"
+    if TARGET == "cuda":
+        assert data.get("cuda_device_count", 0) > 0, "ct2 не видит CUDA-устройств (DLL не пойманы!)"
+    assert data.get("device") == TARGET, (
+        f"модель НЕ на {TARGET}: device={data.get('device')!r} "
+        f"(фолбэк или недособранный рантайм; error={data.get('error')!r})")
     assert data.get("transcribe_ok"), "тестовая транскрипция не отработала"
-    print("OK: GPU работает во frozen-сборке.")
+    print(f"OK: {TARGET} работает во frozen-сборке.")
 
 
 if __name__ == "__main__":
