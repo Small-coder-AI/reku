@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec для whisper_ptt: --onedir --windowed, вход reku/__main__.py.
+"""PyInstaller spec для Reku: --onedir --windowed, вход reku/__main__.py.
 
 Главный риск — CUDA-DLL: ct2 грузит cublas64_12.dll/cudnn*.dll голым
 LoadLibrary, который смотрит только рядом с ctranslate2.dll, в System32 и в
@@ -102,7 +102,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,        # --onedir: бинарники в COLLECT
-    name="whisper_ptt",
+    name="Reku",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -118,5 +118,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="whisper_ptt",
+    name="Reku",
 )

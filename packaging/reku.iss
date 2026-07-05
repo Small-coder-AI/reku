@@ -1,21 +1,21 @@
-; whisper_ptt — инсталлятор (Inno Setup 6). Per-user: без админ-прав, ставит в
-; %LOCALAPPDATA%\Programs\whisper_ptt, делает ярлык в Пуск (+ опц. рабочий стол),
+; Reku — инсталлятор (Inno Setup 6). Per-user: без админ-прав, ставит в
+; %LOCALAPPDATA%\Programs\Reku, делает ярлык в Пуск (+ опц. рабочий стол),
 ; опц. автозапуск (на УСТАНОВЛЕННЫЙ exe) и деинсталлятор.
 ;
 ; Сборка (из корня репозитория):
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\reku.iss
-; Требует заранее собранный dist\whisper_ptt\ (build.ps1) и app.ico в корне репо.
+; Требует заранее собранный dist\Reku\ (build.ps1) и app.ico в корне репо.
 ; Этот файл лежит в packaging/ — все относительные пути ниже (Source/SetupIconFile/
 ; OutputDir) по умолчанию считаются от каталога СКРИПТА (SourceDir не задан), поэтому
-; идут через ..\ до корня репозитория (имя dist\whisper_ptt сменится в Task 7).
+; идут через ..\ до корня репозитория.
 
-#define MyAppName "whisper_ptt"
+#define MyAppName "Reku"
 #define MyAppVersion "0.1.0"
-#define MyAppExe "whisper_ptt.exe"
+#define MyAppExe "Reku.exe"
 #define MyAppPublisher "Ruslan Kobernik"
 
 [Setup]
-AppId={{B7E3F2A1-9C4D-4E8B-A1F6-3D2C5E7A9B40}
+AppId={{BA875A63-A361-47A9-8AA6-6788BBDB646C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -25,7 +25,7 @@ DisableProgramGroupPage=yes
 DisableDirPage=auto
 PrivilegesRequired=lowest
 OutputDir=..\installer
-OutputBaseFilename=whisper_ptt-setup
+OutputBaseFilename=Reku-setup
 SetupIconFile=..\app.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2
@@ -42,7 +42,7 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 Name: "autostart"; Description: "Запускать при старте Windows"; GroupDescription: "Автозапуск:"
 
 [Files]
-Source: "..\dist\whisper_ptt\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\dist\Reku\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
@@ -52,7 +52,7 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: deskto
 [Registry]
 ; автозапуск на УСТАНОВЛЕННЫЙ exe (перекрывает прежнюю portable-запись); чистится при удалении
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
-    ValueName: "whisper_ptt"; ValueData: """{app}\{#MyAppExe}"""; \
+    ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExe}"""; \
     Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
