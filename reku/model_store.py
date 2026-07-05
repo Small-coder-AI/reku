@@ -9,7 +9,7 @@ import os
 
 
 def _data_dir() -> str:
-    import config           # лениво: тесты подменяют config.data_dir
+    from reku import config  # лениво: тесты подменяют config.data_dir
     return config.data_dir()
 
 

@@ -1,8 +1,8 @@
 r"""Смоук-тест собранного .exe: проверяет, что GPU реально работает,
 а не молча сфолбэчился на CPU из-за непойманной CUDA-DLL.
 
-Запуск ПОСЛЕ build.ps1:
-    .venv\Scripts\python.exe test_frozen_smoke.py
+Запуск ПОСЛЕ build.ps1 (из корня репозитория):
+    .venv\Scripts\python.exe tests\test_frozen_smoke.py
 
 Что делает: запускает dist\whisper_ptt\whisper_ptt.exe с переменной
 WHISPER_PTT_SELFTEST=1 — в этом режиме gui.main() НЕ поднимает UI, а
@@ -19,7 +19,8 @@ import json
 import time
 import subprocess
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+# tests/ теперь на один уровень глубже репозитория — dist/ живёт в корне
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = os.path.join(ROOT, "dist", "whisper_ptt", "whisper_ptt.exe")
 RESULT = os.path.join(os.environ.get("APPDATA", ""), "whisper_ptt", "selftest.json")
 

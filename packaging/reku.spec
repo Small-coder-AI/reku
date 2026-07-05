@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec для whisper_ptt: --onedir --windowed, вход gui.py.
+"""PyInstaller spec для whisper_ptt: --onedir --windowed, вход reku/__main__.py.
 
 Главный риск — CUDA-DLL: ct2 грузит cublas64_12.dll/cudnn*.dll голым
 LoadLibrary, который смотрит только рядом с ctranslate2.dll, в System32 и в
@@ -8,12 +8,18 @@ PATH. Поэтому nvidia-DLL из pip-пакетов кладём в _interna
 ДО импорта faster_whisper. Структуру nvidia/ обязательно сохраняем — иначе
 find_spec("nvidia") во frozen ничего не найдёт.
 
-Сборка:  .venv\Scripts\pyinstaller.exe whisper_ptt.spec --noconfirm
+Сборка (из корня репозитория):  .venv\Scripts\pyinstaller.exe packaging\reku.spec --noconfirm
+(build.ps1 делает Push-Location в корень репо перед вызовом — см. packaging/build.ps1)
 """
 import os
 from PyInstaller.utils.hooks import (
     collect_all, collect_dynamic_libs, collect_data_files, collect_submodules,
 )
+
+# ROOT = корень репозитория (родитель packaging/, где лежит этот .spec).
+# Абсолютный путь — не зависит от того, относительно чего PyInstaller резолвит
+# relative-пути внутри спека (SPECPATH) или от текущего рабочего каталога.
+ROOT = os.path.dirname(os.path.abspath(SPECPATH))
 
 datas = []
 binaries = []
@@ -59,18 +65,20 @@ hiddenimports += collect_submodules("pynput")
 # ── прочее, что иногда не подхватывается анализом ──
 hiddenimports += ["pyperclip", "numpy"]
 
-# наши собственные модули (вход gui.py тянет dictate->backends->cuda_setup и т.д.)
+# наши собственные модули (вход reku/__main__.py тянет gui->dictate->backends->
+# cuda_setup и т.д.; префикс reku. — модули теперь submodule'ы пакета reku)
 hiddenimports += [
-    "cuda_setup", "config", "dictate", "backends", "model_store",
-    "postprocess", "gui_theme", "gui_widgets",
+    "reku.cuda_setup", "reku.config", "reku.dictate", "reku.backends",
+    "reku.model_store", "reku.postprocess", "reku.gui_theme", "reku.gui_widgets",
 ]
 
-# ── иконка (генерируется build.ps1 из make_icon перед сборкой) ──
-icon_path = "app.ico" if os.path.exists("app.ico") else None
+# ── иконка (генерируется build.ps1 из scripts/make_ico.py перед сборкой) ──
+icon_path = os.path.join(ROOT, "app.ico")
+icon_path = icon_path if os.path.exists(icon_path) else None
 
 a = Analysis(
-    ["gui.py"],
-    pathex=["."],
+    [os.path.join(ROOT, "reku", "__main__.py")],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
