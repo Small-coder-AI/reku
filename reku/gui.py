@@ -596,6 +596,17 @@ def main():
     from reku import config
     from reku.dictate import DictationApp
 
+    # Оставшийся от чужих экспериментов офлайн-флаг HF (в env сеанса или даже
+    # в реестре пользователя) ломает первое скачивание модели: «Cannot find an
+    # appropriate cached snapshot folder…». huggingface_hub считает офлайном
+    # ЛЮБУЮ из двух переменных (constants.py: HF_HUB_OFFLINE or
+    # TRANSFORMERS_OFFLINE) — снимаем обе ДО первого его импорта (значение
+    # фиксируется при импорте). Приложение само управляет своими моделями
+    # (маркер .download_complete в model_store) и в сеть ходит только когда
+    # модели реально нет — офлайн-флаг ему лишь вредит.
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
     if os.environ.get("REKU_SELFTEST") == "1":
         sys.exit(_run_selftest())
 
