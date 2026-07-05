@@ -11,7 +11,7 @@ import sys
 if sys.stdout:
     print("whisper_ptt: запускаюсь, гружу зависимости…", flush=True)
 
-import cuda_setup  # noqa: F401 — кладёт nvidia DLL в PATH, СТРОГО до faster_whisper
+from reku import cuda_setup  # noqa: F401 — кладёт nvidia DLL в PATH, СТРОГО до faster_whisper
 
 import time
 import threading
@@ -22,8 +22,8 @@ import pyperclip
 from pynput import keyboard
 from pynput.keyboard import Key, Controller, KeyCode
 
-import config
-import postprocess
+from reku import config
+from reku import postprocess
 
 # Инференс инкапсулирован в backends.py (faster_whisper грузится лениво там,
 # строго после cuda_setup). DictationApp работает через self.backend.
@@ -93,7 +93,7 @@ class DictationApp:
         (спека Фазы 2). При окончательном сбое (нет сети, OOM, битая модель,
         device='cuda' без GPU) НЕ виснет в loading: обнуляет backend, переводит
         UI в 'error' с текстом причины и пробрасывает исключение наверх."""
-        import backends
+        from reku import backends
         try:
             self.backend = backends.select_backend(self.cfg)
             try:
@@ -115,7 +115,7 @@ class DictationApp:
             raise
 
     def _download_and_load(self):
-        import model_store
+        from reku import model_store
         mid = self.backend.model_id
         if mid and not model_store.is_cached(mid):
             self._set_state("downloading")

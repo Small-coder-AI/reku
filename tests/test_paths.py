@@ -1,6 +1,7 @@
-"""Тесты путей. Запуск: python test_paths.py (GPU не нужен)."""
+"""Тесты путей. Запуск (из корня репозитория): python tests/test_paths.py (GPU не нужен)."""
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def check(name, cond):
@@ -10,7 +11,7 @@ def check(name, cond):
 
 ok = True
 
-import config
+from reku import config
 
 # data_dir() из исходников == каталог config.py
 expected_src = os.path.dirname(os.path.abspath(config.__file__))
@@ -36,7 +37,7 @@ ok &= check("api поля присутствуют",
 
 # model_store: пути считаются от config.data_dir() (монкипатчим на temp)
 import tempfile
-import model_store
+from reku import model_store
 
 _tmp = tempfile.mkdtemp()
 config.data_dir = lambda: _tmp  # монкипатч источника правды путей

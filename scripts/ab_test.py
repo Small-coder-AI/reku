@@ -1,10 +1,10 @@
 """A/B-проба настроек распознавания на ОДНОМ и том же аудио — чтобы глазами и
 цифрами сравнить «латиницу внутри русских слов» между конфигами.
 
-Запуск (записать ~18 c с микрофона и сравнить 3 конфига):
-    .venv\\Scripts\\python.exe ab_test.py
+Запуск (из корня репозитория; записать ~18 c с микрофона и сравнить 3 конфига):
+    .venv\\Scripts\\python.exe scripts\\ab_test.py
 На готовом аудио (wav/mp3/…):
-    .venv\\Scripts\\python.exe ab_test.py path\\to\\audio.wav
+    .venv\\Scripts\\python.exe scripts\\ab_test.py path\\to\\audio.wav
 
 Метрика «% смешанных слов» — слова, где в ОДНОМ токене есть и кириллица, и
 латиница (это и есть симптом). Меньше = лучше. Печатает и сами расшифровки,
@@ -15,12 +15,14 @@
   B — русский язык + русский якорь, бренды в русской рамке промпта
   C — русский язык + чисто русский промпт, бренды в hotwords  (новый дефолт)
 """
+import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import re
 
-import cuda_setup  # noqa: F401 — кладёт nvidia-DLL в PATH СТРОГО до faster_whisper
+from reku import cuda_setup  # noqa: F401 — кладёт nvidia-DLL в PATH СТРОГО до faster_whisper
 from faster_whisper import WhisperModel
-import config
+from reku import config
 
 CYR = re.compile(r"[А-Яа-яЁё]")
 LAT = re.compile(r"[A-Za-z]")
