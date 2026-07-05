@@ -25,6 +25,8 @@ print("tray available:", QSystemTrayIcon.isSystemTrayAvailable())
 
 win.show(); app.processEvents()
 
+assert win.runtime_lbl.text().startswith("Работает:")
+
 # гоняем состояния через сигналы (имитация колбэков из рабочих потоков)
 for s in ["loading", "idle", "recording", "transcribing", "idle"]:
     bridge.stateChanged.emit(s); app.processEvents()
