@@ -169,7 +169,7 @@ def load(path: str = CONFIG_PATH) -> Config:
             print(f"[config] не смог прочитать {path}: {e}; беру дефолты")
         if _migrate(cfg):
             save(cfg, path)
-            print(f"[config] миграция: латинский промпт -> русский якорь + hotwords")
+            print("[config] миграция: латинский промпт -> русский якорь + hotwords")
     else:
         save(cfg, path)
         print(f"[config] создан {path}")
