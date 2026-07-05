@@ -15,7 +15,20 @@ $RunKey     = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
-# (обработка -Uninstall добавляется в Task 10 — блок Invoke-Uninstall сразу после констант)
+function Invoke-Uninstall {
+    Write-Step "Удаляю $AppName..."
+    Remove-Item (Join-Path $StartMenu "$AppName.lnk") -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "$AppName.lnk") -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $RunKey -Name $AppName -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+    $data = Join-Path $env:APPDATA $AppName
+    if (Test-Path $data) {
+        $ans = Read-Host "Удалить данные и скачанные модели ($data)? [y/N]"
+        if ($ans -eq "y") { Remove-Item -Recurse -Force $data }
+    }
+    Write-Host "Удалено." -ForegroundColor Green
+}
+if ($Uninstall) { Invoke-Uninstall; return }
 
 # ── 1. Железо ────────────────────────────────────────────────
 Write-Step "Определяю железо..."
@@ -75,3 +88,30 @@ $req | Set-Content $reqFile -Encoding UTF8
 & $vpy -m pip install --upgrade pip --quiet
 & $vpy -m pip install -r $reqFile
 if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
+
+# ── 5. Ярлыки ────────────────────────────────────────────────
+Write-Step "Создаю ярлыки..."
+$pyw = Join-Path $venv "Scripts\pythonw.exe"
+$ico = Join-Path $InstallDir "packaging\app.ico"
+function New-Shortcut($path) {
+    $ws = New-Object -ComObject WScript.Shell
+    $sc = $ws.CreateShortcut($path)
+    $sc.TargetPath = $pyw; $sc.Arguments = "-m reku"
+    $sc.WorkingDirectory = $InstallDir
+    if (Test-Path $ico) { $sc.IconLocation = $ico }
+    $sc.Save()
+}
+New-Shortcut (Join-Path $StartMenu "$AppName.lnk")
+$desk = Read-Host "Ярлык на рабочий стол? [Y/n]"
+if ($desk -ne "n") { New-Shortcut (Join-Path ([Environment]::GetFolderPath("Desktop")) "$AppName.lnk") }
+
+# ── 6. Автозапуск ────────────────────────────────────────────
+$auto = Read-Host "Запускать $AppName при старте Windows? [y/N]"
+if ($auto -eq "y") {
+    Set-ItemProperty -Path $RunKey -Name $AppName -Value "`"$pyw`" -m reku"
+    Write-Host "    Автозапуск включён (можно выключить в настройках $AppName)."
+}
+
+Write-Host ""
+Write-Host "Готово! Запускай $AppName из меню Пуск." -ForegroundColor Green
+Write-Host "Модель распознавания скачается при первом запуске (1.5–3 ГБ, вопрос терпения)."
