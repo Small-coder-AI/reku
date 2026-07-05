@@ -24,9 +24,11 @@ Thumbs.db
 build/
 dist/
 installer/
-app.ico
+/app.ico
+!packaging/app.ico
 selftest.json
 check.png
+requirements.effective.txt
 
 # IDE
 .vscode/
