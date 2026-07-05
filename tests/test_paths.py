@@ -1,6 +1,8 @@
 """Тесты путей. Запуск (из корня репозитория): python tests/test_paths.py (GPU не нужен)."""
 import os
 import sys
+import tempfile
+import contextlib
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -9,23 +11,67 @@ def check(name, cond):
     return cond
 
 
+@contextlib.contextmanager
+def frozen_appdata(path):
+    """Подменяет sys.frozen=True и %APPDATA% на время блока. Нужно потому, что
+    data_dir() во frozen-режиме теперь мигрирует старый каталог данных (побочный
+    эффект) — без подмены APPDATA тест рисковал бы тронуть настоящий каталог
+    пользователя, а не временный."""
+    old_appdata = os.environ.get("APPDATA")
+    os.environ["APPDATA"] = path
+    sys.frozen = True
+    try:
+        yield
+    finally:
+        del sys.frozen
+        if old_appdata is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = old_appdata
+
+
 ok = True
 
 from reku import config
 
-# data_dir() из исходников == каталог config.py
-expected_src = os.path.dirname(os.path.abspath(config.__file__))
-ok &= check("data_dir из исходников = каталог скрипта", config.data_dir() == expected_src)
+# data_dir() из исходников == корень репозитория (родитель пакета reku/), а НЕ
+# каталог config.py — иначе в dev-режиме config.json/models/ ищутся не там, где
+# реально лежат (баг переезда config.py в reku/ в Task 5: см. корневой config.json
+# и models/ с уже скачанными моделями против пустых reku/config.json, reku/models/).
+expected_src = os.path.dirname(os.path.dirname(os.path.abspath(config.__file__)))
+ok &= check("data_dir из исходников = корень репо", config.data_dir() == expected_src)
 
-# data_dir() во frozen-режиме = %APPDATA%\whisper_ptt
-sys.frozen = True
-try:
-    d = config.data_dir()
-    appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-    ok &= check("data_dir frozen = %APPDATA%\\whisper_ptt",
-                d == os.path.join(appdata, "whisper_ptt"))
-finally:
-    del sys.frozen
+# data_dir() во frozen-режиме = %APPDATA%\Reku (APPDATA подменён на temp-каталог)
+with tempfile.TemporaryDirectory() as _appdata:
+    with frozen_appdata(_appdata):
+        d = config.data_dir()
+    ok &= check("data_dir frozen = %APPDATA%\\Reku", d == os.path.join(_appdata, "Reku"))
+
+# миграция: старый %APPDATA%/whisper_ptt переименовывается в %APPDATA%/Reku
+# (модели ~3 ГБ внутри не перекачиваются повторно)
+with tempfile.TemporaryDirectory() as _appdata:
+    _old = os.path.join(_appdata, "whisper_ptt")
+    os.makedirs(_old)
+    with open(os.path.join(_old, "config.json"), "w", encoding="utf-8") as f:
+        f.write("{}")
+    with frozen_appdata(_appdata):
+        d = config.data_dir()
+    _new = os.path.join(_appdata, "Reku")
+    ok &= check("data_dir мигрирует whisper_ptt -> Reku", d == _new)
+    ok &= check("миграция переносит config.json внутри",
+                os.path.isfile(os.path.join(_new, "config.json")))
+    ok &= check("миграция убирает старый каталог", not os.path.exists(_old))
+
+# если новый каталог уже есть — старый не трогаем (не перезатираем данные)
+with tempfile.TemporaryDirectory() as _appdata:
+    _old = os.path.join(_appdata, "whisper_ptt")
+    _new = os.path.join(_appdata, "Reku")
+    os.makedirs(_old)
+    os.makedirs(_new)
+    with frozen_appdata(_appdata):
+        d = config.data_dir()
+    ok &= check("data_dir с уже существующим Reku = Reku (без миграции)", d == _new)
+    ok &= check("старый whisper_ptt остаётся нетронутым", os.path.exists(_old))
 
 # новые дефолты конфига
 c = config.Config()
@@ -36,7 +82,6 @@ ok &= check("api поля присутствуют",
             and hasattr(c, "api_key") and hasattr(c, "api_model"))
 
 # model_store: пути считаются от config.data_dir() (монкипатчим на temp)
-import tempfile
 from reku import model_store
 
 _tmp = tempfile.mkdtemp()

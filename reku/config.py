@@ -1,4 +1,4 @@
-"""Конфиг whisper_ptt. Хранится в config.json рядом со скриптом.
+"""Конфиг Reku. Хранится в config.json в каталоге данных приложения (см. data_dir()).
 
 Цель — лёгкий интерфейс, в который подгружаются модели: всё, что можно
 переключить (модель, точность, хоткей, режим, язык, фильтры), живёт здесь.
@@ -9,15 +9,35 @@ import sys
 import json
 from dataclasses import dataclass, asdict, fields
 
+_OLD_DIR_NAME = "whisper_ptt"   # имя каталога данных до переименования продукта (июль 2026)
+
+
+def _migrate_data_dir(new: str) -> None:
+    """Переименовать старый каталог данных (whisper_ptt) в новый (Reku), чтобы модели
+    (~3 ГБ) не перекачивались заново после переименования продукта. Каталог занят
+    или другая ошибка ОС — не падаем, работаем дальше на новом пути; перенос
+    попробуется снова при следующем запуске."""
+    old = os.path.join(os.path.dirname(new), _OLD_DIR_NAME)
+    if os.path.isdir(old) and not os.path.exists(new):
+        try:
+            os.replace(old, new)
+            print(f"[config] каталог данных перенесён: {old} -> {new}")
+        except OSError as e:
+            print(f"[config] не смог перенести {old} -> {new}: {e}", file=sys.stderr)
+
 
 def data_dir() -> str:
-    """Каталог данных приложения. Чистая функция (без побочных эффектов).
-    Frozen (.exe): %APPDATA%\\whisper_ptt — из Program Files писать нельзя.
-    Из исходников: каталог этого файла (удобно для разработки)."""
+    """Каталог данных приложения.
+    Frozen (.exe): %APPDATA%\\Reku — из Program Files писать нельзя; при первом
+    обращении после обновления со старого имени мягко переносит каталог целиком
+    (см. _migrate_data_dir) — единственный побочный эффект этой функции.
+    Из исходников: корень репозитория (родитель пакета reku/) — там же лежат
+    config.json и models/ для разработки, как и до переезда config.py в reku/."""
     if getattr(sys, "frozen", False):
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        return os.path.join(appdata, "whisper_ptt")
-    return os.path.dirname(os.path.abspath(__file__))
+        d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Reku")
+        _migrate_data_dir(d)
+        return d
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 CONFIG_PATH = os.path.join(data_dir(), "config.json")
