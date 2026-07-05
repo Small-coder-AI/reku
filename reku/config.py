@@ -9,7 +9,11 @@ import sys
 import json
 from dataclasses import dataclass, asdict, fields
 
+from reku import APP_NAME   # безопасно: reku/__init__.py ничего не импортирует (цикла нет)
+
 _OLD_DIR_NAME = "whisper_ptt"   # имя каталога данных до переименования продукта (июль 2026)
+
+_RESOLVED_DATA_DIR = None   # кэш результата data_dir() на весь процесс (см. её docstring)
 
 
 def _migrate_data_dir(new: str) -> str:
@@ -35,17 +39,30 @@ def _migrate_data_dir(new: str) -> str:
 
 def data_dir() -> str:
     """Каталог данных приложения.
-    Frozen (.exe): %APPDATA%\\Reku — из Program Files писать нельзя; при первом
+    Frozen (.exe): %APPDATA%\\<APP_NAME> — из Program Files писать нельзя; при первом
     обращении после обновления со старого имени мягко переносит каталог целиком
     (см. _migrate_data_dir) — единственный побочный эффект этой функции; если
     перенос не удался, возвращается СТАРЫЙ каталог (данные не сиротеют, попытка
     повторится при следующем запуске).
     Из исходников: корень репозитория (родитель пакета reku/) — там же лежат
-    config.json и models/ для разработки, как и до переезда config.py в reku/."""
+    config.json и models/ для разработки, как и до переезда config.py в reku/.
+
+    Результат кэшируется на уровне модуля (_RESOLVED_DATA_DIR) и считается ОДИН
+    РАЗ за жизнь процесса. Без этого случай, когда первый вызов вернул СТАРЫЙ
+    каталог (перенос не удался — занят и т.п.), а к следующему вызову препятствие
+    исчезло бы, на середине работы переключил рабочий каталог на новый — а
+    CONFIG_PATH (вычислен один раз при импорте, из первого же вызова data_dir())
+    продолжал бы смотреть на старый; настройки, сохранённые после переключения,
+    писались бы не туда и терялись. Кэш фиксирует каталог на весь процесс."""
+    global _RESOLVED_DATA_DIR
+    if _RESOLVED_DATA_DIR is not None:
+        return _RESOLVED_DATA_DIR
     if getattr(sys, "frozen", False):
-        new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Reku")
-        return _migrate_data_dir(new)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
+        _RESOLVED_DATA_DIR = _migrate_data_dir(new)
+    else:
+        _RESOLVED_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return _RESOLVED_DATA_DIR
 
 
 CONFIG_PATH = os.path.join(data_dir(), "config.json")

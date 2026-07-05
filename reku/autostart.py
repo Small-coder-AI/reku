@@ -1,6 +1,6 @@
 """Автозапуск при старте Windows через HKCU\\...\\Run.
 
-Пишем путь к .exe из sys.executable (во frozen это сам whisper_ptt.exe;
+Пишем путь к .exe из sys.executable (во frozen это сам Reku.exe;
 из исходников — python.exe, что для автозапуска dev-режима бессмысленно,
 поэтому из исходников функция всё равно работает, но указывает на интерпретатор).
 HKCU не требует прав администратора. Значение берём в кавычки на случай
@@ -9,8 +9,10 @@ HKCU не требует прав администратора. Значение
 import sys
 import os
 
+from reku import APP_NAME
+
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-_VALUE_NAME = "whisper_ptt"
+_VALUE_NAME = APP_NAME   # имя значения в реестре = имя продукта (единая константа)
 
 
 def _exe_command() -> str:

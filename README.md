@@ -1,4 +1,4 @@
-# whisper_ptt
+# Reku
 
 Локальная диктовка на Windows: голос → текст в активное окно по push-to-talk.
 Полностью офлайн. Два движка под одним контрактом: faster-whisper/CTranslate2

@@ -1,4 +1,4 @@
-"""whisper_ptt — локальная диктовка по push-to-talk (голос → текст в активное окно).
+"""Reku — локальная диктовка по push-to-talk (голос → текст в активное окно).
 
 Запуск:  python dictate.py
 Настройки — в config.json (создаётся при первом запуске). См. config.py.
@@ -7,9 +7,11 @@
 """
 import sys
 
+from reku import APP_NAME
+
 # Мгновенный фидбек при старте (под pythonw stdout=None — поэтому guard).
 if sys.stdout:
-    print("whisper_ptt: запускаюсь, гружу зависимости…", flush=True)
+    print(f"{APP_NAME}: запускаюсь, гружу зависимости…", flush=True)
 
 from reku import cuda_setup  # noqa: F401 — кладёт nvidia DLL в PATH, СТРОГО до faster_whisper
 

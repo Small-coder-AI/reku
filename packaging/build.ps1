@@ -1,4 +1,4 @@
-# packaging\build.ps1 — сборка переносимого whisper_ptt.exe (PyInstaller --onedir --windowed)
+# packaging\build.ps1 — сборка переносимого Reku.exe (PyInstaller --onedir --windowed)
 # Запуск (из корня репозитория):  .\packaging\build.ps1            (обычная сборка)
 #                                 .\packaging\build.ps1 -Shortcut  (ещё и ярлык на рабочий стол)
 param(
@@ -34,7 +34,7 @@ Write-Host "Собираю .exe..." -ForegroundColor Cyan
 Pop-Location
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller вернул код $LASTEXITCODE" }
 
-$exe = Join-Path $root "dist\whisper_ptt\whisper_ptt.exe"
+$exe = Join-Path $root "dist\Reku\Reku.exe"
 if (-not (Test-Path $exe)) { throw "Ожидаемый .exe не найден: $exe" }
 Write-Host "Готово: $exe" -ForegroundColor Green
 
@@ -49,13 +49,13 @@ if ($Installer) {
     & $iscc (Join-Path $root "packaging\reku.iss")
     Pop-Location
     if ($LASTEXITCODE -ne 0) { throw "ISCC вернул код $LASTEXITCODE" }
-    Write-Host "Инсталлятор: $(Join-Path $root 'installer\whisper_ptt-setup.exe')" -ForegroundColor Green
+    Write-Host "Инсталлятор: $(Join-Path $root 'installer\Reku-setup.exe')" -ForegroundColor Green
 }
 
 # 4) опциональный ярлык на рабочем столе
 if ($Shortcut) {
     $desktop = [Environment]::GetFolderPath("Desktop")
-    $lnk = Join-Path $desktop "whisper_ptt.lnk"
+    $lnk = Join-Path $desktop "Reku.lnk"
     $ws = New-Object -ComObject WScript.Shell
     $sc = $ws.CreateShortcut($lnk)
     $sc.TargetPath = $exe

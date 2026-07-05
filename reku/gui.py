@@ -1,4 +1,4 @@
-"""whisper_ptt — десктопный UI на PySide6. Frameless, тёмный, с анимированным
+"""Reku — десктопный UI на PySide6. Frameless, тёмный, с анимированным
 orb'ом, живым вэйвформом, настройками и треем. Фронт над движком DictationApp.
 
 Запуск:  python gui.py   (или pythonw gui.py без консоли)
@@ -6,8 +6,10 @@ orb'ом, живым вэйвформом, настройками и треем.
 import os
 import sys
 
+from reku import APP_NAME
+
 if sys.stdout:
-    print("whisper_ptt UI: запускаюсь…", flush=True)
+    print(f"{APP_NAME} UI: запускаюсь…", flush=True)
 
 from PySide6.QtCore import Qt, QObject, Signal, QPoint, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
@@ -19,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-_SINGLE_KEY = "whisper_ptt_singleton"
+_SINGLE_KEY = "reku-single-instance"
 
 from reku import gui_theme as T
 from reku.gui_widgets import MicOrb, WaveformStrip, _c
@@ -73,7 +75,7 @@ class TitleBar(QWidget):
 
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color: {T.ACCENT}; font-size: 11px;")
-        title = QLabel("whisper_ptt"); title.setObjectName("TitleLabel")
+        title = QLabel(APP_NAME); title.setObjectName("TitleLabel")
         lay.addWidget(self.dot); lay.addWidget(title)
         lay.addStretch(1)
 
@@ -537,9 +539,9 @@ def make_icon(rgb):
 
 
 def _run_selftest():
-    """Headless-самопроверка собранного .exe (WHISPER_PTT_SELFTEST=1).
+    """Headless-самопроверка собранного .exe (REKU_SELFTEST=1).
     UI не поднимаем: грузим модель, делаем короткую транскрипцию тишины,
-    пишем результат в %APPDATA%/whisper_ptt/selftest.json и выходим.
+    пишем результат в %APPDATA%/Reku/selftest.json и выходим.
     Главное — убедиться, что ct2 ВИДИТ CUDA (а не молча ушёл на CPU из-за
     непойманной DLL). test_frozen_smoke.py читает этот json."""
     import json
@@ -581,7 +583,7 @@ def main():
     from reku import config
     from reku.dictate import DictationApp
 
-    if os.environ.get("WHISPER_PTT_SELFTEST") == "1":
+    if os.environ.get("REKU_SELFTEST") == "1":
         sys.exit(_run_selftest())
 
     app = QApplication(sys.argv)
@@ -619,7 +621,7 @@ def main():
 
     # системный трей
     tray = QSystemTrayIcon(make_icon(T.STATE_RGB["loading"]), app)
-    tray.setToolTip("whisper_ptt — загрузка…")
+    tray.setToolTip(f"{APP_NAME} — загрузка…")
     menu = QMenu()
     menu.addAction("Показать").triggered.connect(win.show_normal)
     menu.addSeparator()
@@ -640,7 +642,7 @@ def main():
     def on_tray_state(s):
         rgb = T.STATE_RGB.get(s, T.RGB["accent"])
         tray.setIcon(make_icon(rgb))
-        tray.setToolTip(f"whisper_ptt — {T.STATE_TEXT.get(s, s)}")
+        tray.setToolTip(f"{APP_NAME} — {T.STATE_TEXT.get(s, s)}")
     bridge.stateChanged.connect(on_tray_state)
 
     # перерисовать иконку трея при смене темы + следовать системной теме на лету

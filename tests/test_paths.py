@@ -34,16 +34,28 @@ ok = True
 
 from reku import config
 
+
+def _reset_data_dir_cache():
+    """Сбрасывает кэш data_dir() между тестовыми кейсами. Начиная с Task 7 data_dir()
+    запоминает результат на весь процесс (см. _RESOLVED_DATA_DIR в config.py и
+    docstring data_dir) — а этот файл эмулирует НЕСКОЛЬКО процессов подряд, каждый
+    со своим временным %APPDATA%. Без сброса все кейсы после первого молча получили
+    бы путь, вычисленный в самом первом вызове, вместо честного пересчёта."""
+    config._RESOLVED_DATA_DIR = None
+
+
 # data_dir() из исходников == корень репозитория (родитель пакета reku/), а НЕ
 # каталог config.py — иначе в dev-режиме config.json/models/ ищутся не там, где
 # реально лежат (баг переезда config.py в reku/ в Task 5: см. корневой config.json
 # и models/ с уже скачанными моделями против пустых reku/config.json, reku/models/).
+_reset_data_dir_cache()
 expected_src = os.path.dirname(os.path.dirname(os.path.abspath(config.__file__)))
 ok &= check("data_dir из исходников = корень репо", config.data_dir() == expected_src)
 
 # data_dir() во frozen-режиме = %APPDATA%\Reku (APPDATA подменён на temp-каталог)
 with tempfile.TemporaryDirectory() as _appdata:
     with frozen_appdata(_appdata):
+        _reset_data_dir_cache()
         d = config.data_dir()
     ok &= check("data_dir frozen = %APPDATA%\\Reku", d == os.path.join(_appdata, "Reku"))
 
@@ -55,6 +67,7 @@ with tempfile.TemporaryDirectory() as _appdata:
     with open(os.path.join(_old, "config.json"), "w", encoding="utf-8") as f:
         f.write("{}")
     with frozen_appdata(_appdata):
+        _reset_data_dir_cache()
         d = config.data_dir()
     _new = os.path.join(_appdata, "Reku")
     ok &= check("data_dir мигрирует whisper_ptt -> Reku", d == _new)
@@ -69,6 +82,7 @@ with tempfile.TemporaryDirectory() as _appdata:
     os.makedirs(_old)
     os.makedirs(_new)
     with frozen_appdata(_appdata):
+        _reset_data_dir_cache()
         d = config.data_dir()
     ok &= check("data_dir с уже существующим Reku = Reku (без миграции)", d == _new)
     ok &= check("старый whisper_ptt остаётся нетронутым", os.path.exists(_old))
@@ -93,6 +107,7 @@ with tempfile.TemporaryDirectory() as _appdata:
     config.os.replace = _fail_replace
     try:
         with frozen_appdata(_appdata):
+            _reset_data_dir_cache()
             d = config.data_dir()
     finally:
         config.os.replace = _orig_replace
