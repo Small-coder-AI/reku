@@ -11,10 +11,9 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
 # packaging/app.ico — сюда install.ps1 копирует всю папку packaging/ и берёт
-# иконку для ярлыков (Start Menu/рабочий стол). ВНИМАНИЕ: packaging/reku.spec и
-# packaging/build.ps1 пока смотрят на app.ico в КОРНЕ репо (отдельный путь) —
-# при синхронизации сборки .exe с этим install.ps1 их тоже надо будет свести
-# к одному месту (см. задачи по packaging/).
+# иконку для ярлыков (Start Menu/рабочий стол). packaging/reku.spec и
+# packaging/reku.iss (через build.ps1) тоже смотрят сюда же — единое место,
+# синхронизировать больше нечего.
 _DEFAULT_OUT = os.path.join(_ROOT, "packaging", "app.ico")
 
 

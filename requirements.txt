@@ -1,4 +1,4 @@
-# whisper_ptt — рабочие версии (GPU-инференс на RTX 3050, CUDA 12 / cuDNN 9).
+# Reku — рабочие версии (GPU-инференс на RTX 3050, CUDA 12 / cuDNN 9).
 # Точные пины снимем через `pip freeze` после установки — это верхнеуровневый набор.
 faster-whisper==1.2.1
 ctranslate2==4.7.2
