@@ -1,10 +1,10 @@
-; Reku — инсталлятор (Inno Setup 6). Per-user: без админ-прав, ставит в
+﻿; Reku — инсталлятор (Inno Setup 6). Per-user: без админ-прав, ставит в
 ; %LOCALAPPDATA%\Programs\Reku, делает ярлык в Пуск (+ опц. рабочий стол),
 ; опц. автозапуск (на УСТАНОВЛЕННЫЙ exe) и деинсталлятор.
 ;
 ; Сборка (из корня репозитория):
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\reku.iss
-; Требует заранее собранный dist\Reku\ (build.ps1) и app.ico в корне репо.
+; Требует заранее собранный dist\Reku\ (build.ps1) и packaging\app.ico.
 ; Этот файл лежит в packaging/ — все относительные пути ниже (Source/SetupIconFile/
 ; OutputDir) по умолчанию считаются от каталога СКРИПТА (SourceDir не задан), поэтому
 ; идут через ..\ до корня репозитория.
@@ -26,7 +26,7 @@ DisableDirPage=auto
 PrivilegesRequired=lowest
 OutputDir=..\installer
 OutputBaseFilename=Reku-setup
-SetupIconFile=..\app.ico
+SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2
 SolidCompression=yes

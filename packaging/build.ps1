@@ -1,4 +1,4 @@
-# packaging\build.ps1 — сборка переносимого Reku.exe (PyInstaller --onedir --windowed)
+﻿# packaging\build.ps1 — сборка переносимого Reku.exe (PyInstaller --onedir --windowed)
 # Запуск (из корня репозитория):  .\packaging\build.ps1            (обычная сборка)
 #                                 .\packaging\build.ps1 -Shortcut  (ещё и ярлык на рабочий стол)
 param(

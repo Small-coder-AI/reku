@@ -72,8 +72,8 @@ hiddenimports += [
     "reku.model_store", "reku.postprocess", "reku.gui_theme", "reku.gui_widgets",
 ]
 
-# ── иконка (генерируется build.ps1 из scripts/make_ico.py перед сборкой) ──
-icon_path = os.path.join(ROOT, "app.ico")
+# ── иконка (закоммичена в packaging/; перегенерация — scripts/make_ico.py) ──
+icon_path = os.path.join(ROOT, "packaging", "app.ico")
 icon_path = icon_path if os.path.exists(icon_path) else None
 
 a = Analysis(
