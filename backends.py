@@ -17,6 +17,71 @@ HEAVY_MODELS = {
 }
 CPU_FALLBACK_MODEL = "small"
 
+# Готовые int8-модели OpenVINO на HF (проверено по HF API 2026-07-04).
+# Имя модели из конфига -> репо для скачивания.
+OV_MODEL_MAP = {
+    "large-v3": "OpenVINO/whisper-large-v3-int8-ov",
+    "large-v3-turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
+    "turbo": "OpenVINO/whisper-large-v3-turbo-int8-ov",
+    "distil-large-v3": "OpenVINO/distil-whisper-large-v3-int8-ov",
+    "large-v2": "OpenVINO/whisper-large-v2-int8-ov",
+    "medium": "OpenVINO/whisper-medium-int8-ov",
+    "small": "OpenVINO/whisper-small-int8-ov",
+    "base": "OpenVINO/whisper-base-int8-ov",
+    "tiny": "OpenVINO/whisper-tiny-int8-ov",
+}
+
+
+def ov_lang_token(language):
+    """'ru' -> '<|ru|>' (формат WhisperPipeline); пустой язык -> None (авто)."""
+    return f"<|{language}|>" if language else None
+
+
+def _compression_ratio(text: str) -> float:
+    """Как в faster-whisper: длина текста / длина его zlib-сжатия.
+    Зацикленный повтор жмётся сильно -> ratio высокий (порог фильтра 2.4)."""
+    import zlib
+    data = text.encode("utf-8")
+    return len(data) / len(zlib.compress(data)) if data else 0.0
+
+
+def chunks_to_segments(chunks):
+    """result.chunks (WhisperPipeline) -> сегменты контракта faster-whisper.
+    Наш postprocess читает .text и .compression_ratio; OV его не отдаёт,
+    поэтому считаем сами — иначе фильтр «пересжатых» сегментов мёртв."""
+    from types import SimpleNamespace
+    return [SimpleNamespace(text=c.text, start=c.start_ts, end=c.end_ts,
+                            compression_ratio=_compression_ratio(c.text))
+            for c in (chunks or [])]
+
+
+def make_ov_info(language, duration):
+    """info контракта faster-whisper. ВАЖНО: WhisperPipeline не сообщает
+    уверенность в языке -> language_probability всегда 1.0, поэтому фильтр
+    min_language_probability в OV-пути не действует (осознанная деградация)."""
+    from types import SimpleNamespace
+    return SimpleNamespace(language=language or "", language_probability=1.0,
+                           duration=duration)
+
+
+def apply_vad(audio, sample_rate=16000):
+    """VAD-шаг для OV-пути: Silero из faster-whisper (он всё равно установлен
+    для CPU/CUDA). None = речи нет; иначе склейка речевых кусков."""
+    import numpy as np
+    from faster_whisper.vad import get_speech_timestamps, collect_chunks
+    chunks = get_speech_timestamps(audio, sampling_rate=sample_rate)
+    if not chunks:
+        return None
+    pieces, _ = collect_chunks(audio, chunks, sampling_rate=sample_rate)
+    return np.concatenate(pieces)
+
+
+# Подстановка модели в АВТО-режиме на iGPU — результат ворот бенча
+# (docs/superpowers/specs/2026-07-04-phase2-openvino-igpu-design.md, «Порядок работ»).
+# Пустая карта: large-v3 на Arc 140T уложилась в критерий с запасом
+# (warm 1.2–2.0 с на фразах 11–24 с, bench_results.md 2026-07-04) — не понижаем.
+IGPU_AUTO_SUBSTITUTE = {}
+
 
 def _cuda_available() -> bool:
     """Есть ли пригодный CUDA-GPU для CTranslate2. Любой сбой = нет GPU."""
@@ -28,11 +93,25 @@ def _cuda_available() -> bool:
         return False
 
 
-def resolve_runtime(device, compute_type, model, *, cuda_available):
-    """Чистая функция: ('auto'|'cuda'|'cpu', compute, model) -> конкретные значения.
-    Понижение тяжёлой модели до small происходит ТОЛЬКО в auto-режиме при фолбэке на CPU."""
+def _ov_gpu_available() -> bool:
+    """Есть ли Intel GPU для OpenVINO. Любой сбой (нет пакета/драйвера) = нет."""
+    try:
+        import openvino
+        return "GPU" in openvino.Core().available_devices
+    except Exception:
+        return False
+
+
+def resolve_runtime(device, compute_type, model, *, cuda_available,
+                    ov_gpu_available=False):
+    """Чистая функция: ('auto'|'cuda'|'cpu'|'igpu'|'npu', compute, model) ->
+    конкретные значения. Авто-цепочка: cuda -> igpu -> cpu. Понижение модели —
+    ТОЛЬКО в auto: на cpu тяжёлые -> small, на igpu — по карте ворот бенча."""
     auto = (device == "auto")
-    dev = ("cuda" if cuda_available else "cpu") if auto else device
+    if auto:
+        dev = "cuda" if cuda_available else ("igpu" if ov_gpu_available else "cpu")
+    else:
+        dev = device
 
     comp = compute_type
     if comp in ("", "auto", None):
@@ -41,6 +120,8 @@ def resolve_runtime(device, compute_type, model, *, cuda_available):
     mdl = model
     if auto and dev == "cpu" and model in HEAVY_MODELS:
         mdl = CPU_FALLBACK_MODEL
+    if auto and dev == "igpu":
+        mdl = IGPU_AUTO_SUBSTITUTE.get(model, model)
 
     return dev, comp, mdl
 
@@ -58,6 +139,11 @@ class Backend(ABC):
     def model_id(self):
         """ID модели для докачки, либо None если докачка не нужна (напр. API)."""
         return None
+
+    @property
+    def model_kind(self) -> str:
+        """Вид модели для model_store.ensure_downloaded: 'ct2' | 'ov'."""
+        return "ct2"
 
     @abstractmethod
     def load(self):
@@ -109,21 +195,66 @@ class CTranslate2Backend(Backend):
 
 
 class OpenVINOBackend(Backend):
-    """Intel iGPU/NPU через OpenVINO. Заглушка — реализация в Фазе 2."""
+    """Intel iGPU/NPU через OpenVINO GenAI WhisperPipeline.
+
+    Модели — готовые int8 с HF (OV_MODEL_MAP), без конвертации на машине.
+    Вызовы generate() повторяют проверенные бенчем (bench_backends.py).
+    """
     name = "openvino"
 
-    def __init__(self, cfg):
-        self.cfg = cfg
+    def __init__(self, model, device):
+        self.model_name = model
+        self.device = device          # "igpu" | "npu"
+        self._pipe = None
 
     @property
     def device_label(self) -> str:
-        return "Intel (OpenVINO)"
+        return ("Intel NPU (OpenVINO)" if self.device == "npu"
+                else "Intel GPU (OpenVINO)")
+
+    @property
+    def model_id(self):
+        return OV_MODEL_MAP.get(self.model_name)
+
+    @property
+    def model_kind(self) -> str:
+        return "ov"
 
     def load(self):
-        raise NotImplementedError("OpenVINO-бэкенд — Фаза 2 (на ноуте Honor)")
+        rid = self.model_id
+        if rid is None:
+            raise ValueError(
+                f"модель {self.model_name!r} недоступна для Intel GPU/NPU; "
+                f"выбери одну из: {', '.join(sorted(set(OV_MODEL_MAP)))}")
+        import os
+        import openvino_genai       # лениво: на машинах без OV не импортируется
+        import model_store
+        cache = os.path.join(model_store._data_dir(), "ov_cache")
+        os.makedirs(cache, exist_ok=True)
+        dev = "NPU" if self.device == "npu" else "GPU"
+        props = {"CACHE_DIR": cache}
+        if self.device == "npu":
+            props["STATIC_PIPELINE"] = True   # требование WhisperPipeline на NPU
+        self._pipe = openvino_genai.WhisperPipeline(
+            model_store.model_path(rid), dev, **props)
 
     def transcribe(self, audio, cfg):
-        raise NotImplementedError("OpenVINO-бэкенд — Фаза 2 (на ноуте Honor)")
+        duration = len(audio) / 16000.0
+        if cfg.vad_filter:
+            audio = apply_vad(audio)
+            if audio is None:
+                return [], make_ov_info(cfg.language, duration)
+        kwargs = dict(task="transcribe", return_timestamps=True)
+        lang = ov_lang_token(cfg.language)
+        if lang:
+            kwargs["language"] = lang
+        if cfg.initial_prompt:
+            kwargs["initial_prompt"] = cfg.initial_prompt
+        # beam_size/no_repeat_ngram_size/condition_on_previous_text — CT2-специфика,
+        # в GenAI не пробрасываются: greedy-декод (качество подтверждено бенчем).
+        result = self._pipe.generate(audio.tolist(), **kwargs)
+        segments = chunks_to_segments(getattr(result, "chunks", None))
+        return segments, make_ov_info(cfg.language, duration)
 
 
 class ApiBackend(Backend):
@@ -144,11 +275,24 @@ class ApiBackend(Backend):
         raise NotImplementedError("API-бэкенд — Фаза 2 (опт-ин, аудио уходит в облако)")
 
 
-def select_backend(cfg, *, cuda_probe=None):
-    """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен)."""
+def cpu_fallback_backend(cfg):
+    """Запасной CPU-бэкенд, когда OpenVINO в auto-режиме не поднялся
+    (слабый/незнакомый iGPU, драйвер, нехватка памяти — спека Фазы 2,
+    «Обработка ошибок»). Тяжёлые модели понижаются до small, как в auto+cpu."""
+    mdl = CPU_FALLBACK_MODEL if cfg.model in HEAVY_MODELS else cfg.model
+    return CTranslate2Backend(model=mdl, device="cpu", compute_type="int8")
+
+
+def select_backend(cfg, *, cuda_probe=None, ov_probe=None):
+    """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен).
+    Пробы зовутся только в auto-режиме, ov-проба — только если CUDA нет."""
     if cfg.device == "api":
         return ApiBackend(cfg)
-    probe = cuda_probe or _cuda_available
+    cuda = (cuda_probe or _cuda_available)() if cfg.device == "auto" else False
+    ov = ((ov_probe or _ov_gpu_available)()
+          if (cfg.device == "auto" and not cuda) else False)
     dev, comp, mdl = resolve_runtime(cfg.device, cfg.compute_type, cfg.model,
-                                     cuda_available=probe())
+                                     cuda_available=cuda, ov_gpu_available=ov)
+    if dev in ("igpu", "npu"):
+        return OpenVINOBackend(model=mdl, device=dev)
     return CTranslate2Backend(model=mdl, device=dev, compute_type=comp)
