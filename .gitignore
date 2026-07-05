@@ -20,6 +20,14 @@ _preview_*.png
 .DS_Store
 Thumbs.db
 
+# сборка .exe (PyInstaller) + инсталлятор (Inno Setup): тяжёлые, генерируются
+build/
+dist/
+installer/
+app.ico
+selftest.json
+check.png
+
 # IDE
 .vscode/
 .idea/

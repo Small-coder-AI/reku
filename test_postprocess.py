@@ -46,5 +46,18 @@ ok &= check("join_text", join_text(["а", "б"]) == "а б")
 r = clean_segments([seg("Thank you")], drop_hallucinations=False)
 ok &= check("блок-лист отключаем", r == ["Thank you"])
 
+# H1-фикс: короткие/общеупотребимые реплики БОЛЬШЕ не режутся блок-листом
+ok &= check("'you' не фантом (короткая речь)", not is_hallucination_phrase("you"))
+ok &= check("'bye' не фантом", not is_hallucination_phrase("bye"))
+ok &= check("'thank you' не фантом", not is_hallucination_phrase("thank you"))
+ok &= check("'субтитры' не фантом", not is_hallucination_phrase("субтитры"))
+ok &= check("'добро пожаловать' не фантом", not is_hallucination_phrase("добро пожаловать"))
+ok &= check("clean_segments сохраняет короткое 'you'",
+            clean_segments([seg("you"), seg("привет")]) == ["you", "привет"])
+# но многословные титры-сигнатуры всё ещё режутся
+ok &= check("'спасибо за просмотр' фантом", is_hallucination_phrase("Спасибо за просмотр"))
+ok &= check("'субтитры подготовлены сообществом' фантом",
+            is_hallucination_phrase("Субтитры подготовлены сообществом"))
+
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)
