@@ -599,7 +599,17 @@ def main():
     if os.environ.get("REKU_SELFTEST") == "1":
         sys.exit(_run_selftest())
 
+    # Windows: свой AppUserModelID, иначе панель задач считает окно «Python»
+    # (иконка pythonw вместо нашей) и не связывает его с ярлыком Reku
+    if sys.platform == "win32":
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Reku")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    app.setWindowIcon(make_icon(T.STATE_RGB["idle"]))   # окно/панель задач: наш микрофон
     app.setStyle("Fusion")                 # стабильная отрисовка QSS+палитры на всех
                                            # платформах: нативный Win-стиль игнорирует
                                            # часть стилей (тёмная всплывашка, бледная кнопка)
