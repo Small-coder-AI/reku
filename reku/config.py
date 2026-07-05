@@ -12,31 +12,39 @@ from dataclasses import dataclass, asdict, fields
 _OLD_DIR_NAME = "whisper_ptt"   # имя каталога данных до переименования продукта (июль 2026)
 
 
-def _migrate_data_dir(new: str) -> None:
+def _migrate_data_dir(new: str) -> str:
     """Переименовать старый каталог данных (whisper_ptt) в новый (Reku), чтобы модели
-    (~3 ГБ) не перекачивались заново после переименования продукта. Каталог занят
-    или другая ошибка ОС — не падаем, работаем дальше на новом пути; перенос
-    попробуется снова при следующем запуске."""
+    (~3 ГБ) не перекачивались заново после переименования продукта. Возвращает
+    РАБОЧИЙ каталог: new — когда переносить нечего, новый уже есть или перенос
+    удался; old — когда переименование не удалось (каталог занят и т.п.): тогда
+    продолжаем работать со старым, а перенос попробуется при следующем запуске.
+    Возврат нового пути при ошибке был бы капканом: приложение тут же создало бы
+    пустой новый каталог (makedirs в save()/model_store), ворота миграции
+    `not os.path.exists(new)` закрылись бы навсегда — модели осиротели бы."""
     old = os.path.join(os.path.dirname(new), _OLD_DIR_NAME)
     if os.path.isdir(old) and not os.path.exists(new):
         try:
             os.replace(old, new)
             print(f"[config] каталог данных перенесён: {old} -> {new}")
         except OSError as e:
-            print(f"[config] не смог перенести {old} -> {new}: {e}", file=sys.stderr)
+            print(f"[config] не смог перенести {old} -> {new}: {e}; "
+                  f"работаю со старым каталогом", file=sys.stderr)
+            return old
+    return new
 
 
 def data_dir() -> str:
     """Каталог данных приложения.
     Frozen (.exe): %APPDATA%\\Reku — из Program Files писать нельзя; при первом
     обращении после обновления со старого имени мягко переносит каталог целиком
-    (см. _migrate_data_dir) — единственный побочный эффект этой функции.
+    (см. _migrate_data_dir) — единственный побочный эффект этой функции; если
+    перенос не удался, возвращается СТАРЫЙ каталог (данные не сиротеют, попытка
+    повторится при следующем запуске).
     Из исходников: корень репозитория (родитель пакета reku/) — там же лежат
     config.json и models/ для разработки, как и до переезда config.py в reku/."""
     if getattr(sys, "frozen", False):
-        d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Reku")
-        _migrate_data_dir(d)
-        return d
+        new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Reku")
+        return _migrate_data_dir(new)
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

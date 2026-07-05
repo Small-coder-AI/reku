@@ -73,6 +73,35 @@ with tempfile.TemporaryDirectory() as _appdata:
     ok &= check("data_dir с уже существующим Reku = Reku (без миграции)", d == _new)
     ok &= check("старый whisper_ptt остаётся нетронутым", os.path.exists(_old))
 
+# отказ переименования (каталог занят и т.п.) -> работаем со СТАРЫМ каталогом.
+# Если бы data_dir() вернул новый путь, приложение тут же создало бы его через
+# makedirs (config.save / model_store.model_cache_dir) — и ворота миграции
+# `not os.path.exists(new)` закрылись бы НАВСЕГДА: старый каталог с ~3 ГБ моделей
+# осиротел бы, модели перекачались бы заново. Возврат старого пути оставляет
+# повторную попытку переноса следующему запуску.
+with tempfile.TemporaryDirectory() as _appdata:
+    _old = os.path.join(_appdata, "whisper_ptt")
+    _new = os.path.join(_appdata, "Reku")
+    os.makedirs(_old)
+    with open(os.path.join(_old, "config.json"), "w", encoding="utf-8") as f:
+        f.write("{}")
+
+    def _fail_replace(src, dst):
+        raise OSError("каталог занят (симуляция)")
+
+    _orig_replace = config.os.replace   # config.os — тот же глобальный модуль os
+    config.os.replace = _fail_replace
+    try:
+        with frozen_appdata(_appdata):
+            d = config.data_dir()
+    finally:
+        config.os.replace = _orig_replace
+    ok &= check("отказ переноса -> data_dir возвращает СТАРЫЙ путь", d == _old)
+    ok &= check("отказ переноса: старый каталог цел (config.json на месте)",
+                os.path.isfile(os.path.join(_old, "config.json")))
+    ok &= check("отказ переноса: новый каталог НЕ создан (ворота миграции открыты)",
+                not os.path.exists(_new))
+
 # новые дефолты конфига
 c = config.Config()
 ok &= check("device дефолт = auto", c.device == "auto")
