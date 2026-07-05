@@ -315,6 +315,10 @@ class MainWindow(QWidget):
         self.autostart_chk.toggled.connect(self._autostart_toggled)
         lay.addWidget(self.autostart_chk)
 
+        self.runtime_lbl = QLabel("Работает: —")
+        self.runtime_lbl.setObjectName("HintLabel")
+        lay.addWidget(self.runtime_lbl)
+
         lay.addStretch(1)
         self.apply_btn = QPushButton("Применить"); self.apply_btn.setObjectName("RecordBtn")
         self.apply_btn.setCursor(Qt.PointingHandCursor)
@@ -357,6 +361,14 @@ class MainWindow(QWidget):
                 label = "CPU (GPU не найден)"
             dev = " · " + label
         self.hint.setText(f"{key} · {mode}{dev}")
+
+    def _update_runtime_label(self):
+        b = getattr(self.engine, "backend", None) if self.engine else None
+        if b is None:
+            self.runtime_lbl.setText("Работает: —")
+            return
+        mdl = getattr(b, "model_name", None) or b.name
+        self.runtime_lbl.setText(f"Работает: {b.device_label} · {mdl}")
 
     # ── тема ─────────────────────────────────────────────────
     def apply_theme(self):
@@ -412,6 +424,7 @@ class MainWindow(QWidget):
         self.rec_btn.setEnabled(not busy)
         if state == "idle":
             self._update_hint()
+            self._update_runtime_label()
         elif state == "error":
             err = getattr(self.engine, "_last_error", None) if self.engine else None
             self.hint.setText(err or "Не удалось загрузить модель — проверьте устройство/сеть")
