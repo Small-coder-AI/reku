@@ -15,6 +15,10 @@ from reku.gui import MainWindow
 
 app = QApplication([])
 cfg = config.load()
+# PREVIEW_THEME=dark|light|system — отрендерить конкретную тему (для сравнения палитр)
+_theme = os.environ.get("PREVIEW_THEME")
+if _theme:
+    cfg.theme = _theme
 
 
 def compose(win, name):
@@ -27,8 +31,9 @@ def compose(win, name):
     # раньше путь был захардкожен на конкретную машину (чужой диск/логин) — чинил
     # попутно, раз уж трогал импорты в этом файле; теперь считается через ROOT
     # (см. отчёт по Task 5)
-    bg.save(os.path.join(ROOT, f"_preview_{name}.png"))
-    print("saved", name)
+    suffix = f"_{_theme}" if _theme else ""
+    bg.save(os.path.join(ROOT, f"_preview_{name}{suffix}.png"))
+    print("saved", name + suffix)
 
 
 win = MainWindow(cfg)
