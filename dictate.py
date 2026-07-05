@@ -83,13 +83,28 @@ class DictationApp:
     # ── загрузка модели ──────────────────────────────────────
     def load_model(self):
         import backends
-        import model_store
         self.backend = backends.select_backend(self.cfg)
+        try:
+            self._download_and_load()
+        except Exception as e:
+            # Спека Фазы 2, «Обработка ошибок»: сбой OpenVINO в auto-режиме
+            # (драйвер/память/компиляция) -> тихий откат на CPU, приложение живо.
+            if not (self.cfg.device == "auto"
+                    and isinstance(self.backend, backends.OpenVINOBackend)):
+                raise
+            print(f"[fallback] OpenVINO не поднялся ({e}); перехожу на CPU",
+                  file=sys.stderr, flush=True)
+            self.backend = backends.cpu_fallback_backend(self.cfg)
+            self._download_and_load()
+
+    def _download_and_load(self):
+        import model_store
         mid = self.backend.model_id
         if mid and not model_store.is_cached(mid):
             self._set_state("downloading")
             model_store.ensure_downloaded(
-                mid, on_progress=lambda m: print(
+                mid, kind=self.backend.model_kind,
+                on_progress=lambda m: print(
                     f"Скачиваю модель '{m}' (первый запуск, может занять минуты)…",
                     flush=True))
         self._set_state("loading")
