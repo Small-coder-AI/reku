@@ -21,8 +21,8 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 _SINGLE_KEY = "whisper_ptt_singleton"
 
-import gui_theme as T
-from gui_widgets import MicOrb, WaveformStrip, _c
+from reku import gui_theme as T
+from reku.gui_widgets import MicOrb, WaveformStrip, _c
 
 # карты для комбобоксов настроек
 MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
@@ -118,7 +118,7 @@ def _check_icon_url():
     if _CHECK_URL:
         return _CHECK_URL
     try:
-        import config
+        from reku import config
         from PySide6.QtCore import QPointF
         from PySide6.QtGui import QPen
         d = config.data_dir(); os.makedirs(d, exist_ok=True)
@@ -306,7 +306,7 @@ class MainWindow(QWidget):
         secS = QLabel("СИСТЕМА"); secS.setObjectName("SectionLabel"); lay.addWidget(secS)
         self.autostart_chk = QCheckBox("Запускать при старте Windows")
         try:
-            import autostart
+            from reku import autostart
             self.autostart_chk.setChecked(autostart.is_enabled())
         except Exception:
             self.autostart_chk.setEnabled(False)
@@ -376,12 +376,12 @@ class MainWindow(QWidget):
 
     def _theme_changed(self):
         self.cfg.theme = self.theme_combo.currentData()
-        import config as _cfg; _cfg.save(self.cfg)
+        from reku import config as _cfg; _cfg.save(self.cfg)
         self.apply_theme()
 
     def _autostart_toggled(self, on):
         try:
-            import autostart
+            from reku import autostart
             autostart.set_enabled(bool(on))
         except Exception as e:
             print(f"[autostart] {e}", file=sys.stderr)
@@ -449,13 +449,13 @@ class MainWindow(QWidget):
 
     def _lang_changed(self):
         self.cfg.language = self.lang_combo.currentData()
-        import config as _cfg; _cfg.save(self.cfg)
+        from reku import config as _cfg; _cfg.save(self.cfg)
         if self.engine:
             self.engine.apply_config()
         self._update_hint()
 
     def _apply_settings(self):
-        import config as _cfg
+        from reku import config as _cfg
         c = self.cfg
         old = (c.model, c.device, c.compute_type)
         c.model = self.model_combo.currentText()
@@ -485,7 +485,7 @@ class MainWindow(QWidget):
         в config.json и поднять прежний рабочий бэкенд. Иначе нерабочий выбор
         (нет такого устройства / модель не поднялась) застревает в конфиге,
         и каждый следующий запуск приложения падает так же."""
-        import config as _cfg
+        from reku import config as _cfg
         emit = self.bridge.stateChanged.emit if self.bridge else self.set_state
         try:
             if not self.engine.reload_model():   # False = движок занят записью
@@ -544,10 +544,10 @@ def _run_selftest():
     непойманной DLL). test_frozen_smoke.py читает этот json."""
     import json
     import numpy as np
-    import config
-    import cuda_setup
-    import backends
-    from dictate import DictationApp
+    from reku import config
+    from reku import cuda_setup
+    from reku import backends
+    from reku.dictate import DictationApp
 
     result = {"cuda_device_count": 0, "device": None, "transcribe_ok": False,
               "added_dll_dirs": list(getattr(cuda_setup, "_ADDED", [])), "error": None}
@@ -578,8 +578,8 @@ def _run_selftest():
 
 def main():
     import threading
-    import config
-    from dictate import DictationApp
+    from reku import config
+    from reku.dictate import DictationApp
 
     if os.environ.get("WHISPER_PTT_SELFTEST") == "1":
         sys.exit(_run_selftest())

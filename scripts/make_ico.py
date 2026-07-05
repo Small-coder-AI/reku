@@ -1,18 +1,20 @@
 """Генерирует app.ico из gui.make_icon() — переиспользует существующую отрисовку
-иконки (кружок + микрофон). Запуск из venv: python make_ico.py
+иконки (кружок + микрофон). Запуск из venv (из корня репозитория): python scripts/make_ico.py
 
 Сохраняем несколько размеров в один .ico (Windows подберёт нужный для трея/панели).
 QIcon уже умеет рендерить QPixmap нужного размера через make_icon(rgb).
 """
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def build(out="app.ico"):
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QSize, Qt
     from PySide6.QtGui import QImage
-    import gui
-    import gui_theme as T
+    from reku import gui
+    from reku import gui_theme as T
 
     from PySide6.QtCore import QBuffer, QByteArray
     app = QApplication.instance() or QApplication([])  # нужен для QPixmap

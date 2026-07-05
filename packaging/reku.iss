@@ -2,8 +2,12 @@
 ; %LOCALAPPDATA%\Programs\whisper_ptt, делает ярлык в Пуск (+ опц. рабочий стол),
 ; опц. автозапуск (на УСТАНОВЛЕННЫЙ exe) и деинсталлятор.
 ;
-; Сборка:  "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" whisper_ptt.iss
-; Требует заранее собранный dist\whisper_ptt\ (build.ps1) и app.ico.
+; Сборка (из корня репозитория):
+;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\reku.iss
+; Требует заранее собранный dist\whisper_ptt\ (build.ps1) и app.ico в корне репо.
+; Этот файл лежит в packaging/ — все относительные пути ниже (Source/SetupIconFile/
+; OutputDir) по умолчанию считаются от каталога СКРИПТА (SourceDir не задан), поэтому
+; идут через ..\ до корня репозитория (имя dist\whisper_ptt сменится в Task 7).
 
 #define MyAppName "whisper_ptt"
 #define MyAppVersion "0.1.0"
@@ -20,9 +24,9 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 DisableDirPage=auto
 PrivilegesRequired=lowest
-OutputDir=installer
+OutputDir=..\installer
 OutputBaseFilename=whisper_ptt-setup
-SetupIconFile=app.ico
+SetupIconFile=..\app.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2
 SolidCompression=yes
@@ -38,7 +42,7 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 Name: "autostart"; Description: "Запускать при старте Windows"; GroupDescription: "Автозапуск:"
 
 [Files]
-Source: "dist\whisper_ptt\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\dist\whisper_ptt\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"

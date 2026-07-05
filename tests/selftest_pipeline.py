@@ -1,8 +1,13 @@
 """Headless-проверка пайплайна: config -> model -> transcribe -> filter.
-Клавиатуру/вставку не трогает. Запуск: python selftest_pipeline.py"""
+Клавиатуру/вставку не трогает. Запуск (из корня репозитория):
+python tests/selftest_pipeline.py"""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
-import config
-from dictate import DictationApp, parse_hotkey
+from reku import config
+from reku.dictate import DictationApp, parse_hotkey
 
 # 1. конфиг и парс хоткея
 cfg = config.load()

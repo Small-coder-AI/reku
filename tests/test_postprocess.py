@@ -1,6 +1,10 @@
-"""Тесты пост-фильтра. Запуск: python test_postprocess.py (GPU не нужен)."""
+"""Тесты пост-фильтра. Запуск (из корня репозитория): python tests/test_postprocess.py (GPU не нужен)."""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from types import SimpleNamespace as S
-from postprocess import normalize, is_hallucination_phrase, clean_segments, join_text
+from reku.postprocess import normalize, is_hallucination_phrase, clean_segments, join_text
 
 
 def seg(text, cr=1.0):

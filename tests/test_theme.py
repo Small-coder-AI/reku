@@ -1,6 +1,10 @@
 """Тесты темы (Фаза 3): мутация словарей на месте, build_qss, resolve_theme.
-GPU/окно не нужны. Запуск: python test_theme.py"""
-import gui_theme as T
+GPU/окно не нужны. Запуск (из корня репозитория): python tests/test_theme.py"""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from reku import gui_theme as T
 
 
 def check(name, cond):

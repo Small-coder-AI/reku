@@ -14,14 +14,21 @@ _VALUE_NAME = "whisper_ptt"
 
 
 def _exe_command() -> str:
-    """Команда запуска для реестра. Frozen -> сам .exe. Иначе -> pythonw gui.py."""
+    """Команда запуска для реестра. Frozen -> сам .exe. Иначе -> pythonw -m reku.
+
+    dev-режим: реестр (HKCU\\...\\Run) стартует процесс с произвольным рабочим
+    каталогом (не обязательно корень репо), поэтому просто "-m reku" ненадёжен —
+    пакет reku резолвится, только если его родитель есть в sys.path. Вместо
+    этого явно подставляем ROOT (родитель reku/, вычисленный от __file__) через
+    -c, это не зависит от cwd процесса автозапуска."""
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
-    # dev-режим: запускаем gui.py через pythonw из текущего venv
+    # dev-режим: запускаем через pythonw из текущего venv
     pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui.py")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     exe = pyw if os.path.exists(pyw) else sys.executable
-    return f'"{exe}" "{script}"'
+    code = f"import sys; sys.path.insert(0, r'{root}'); from reku.gui import main; main()"
+    return f'"{exe}" -c "{code}"'
 
 
 def is_enabled() -> bool:
@@ -38,7 +45,7 @@ def is_enabled() -> bool:
 
 def set_enabled(enabled: bool, command: str | None = None) -> None:
     """Включить/выключить автозапуск. Идемпотентно. command — явная строка запуска
-    (по умолчанию из _exe_command(): сам .exe во frozen, иначе pythonw gui.py)."""
+    (по умолчанию из _exe_command(): сам .exe во frozen, иначе pythonw -m reku)."""
     import winreg
     if enabled:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
