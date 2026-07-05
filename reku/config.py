@@ -46,6 +46,13 @@ def data_dir() -> str:
     повторится при следующем запуске).
     Из исходников: корень репозитория (родитель пакета reku/) — там же лежат
     config.json и models/ для разработки, как и до переезда config.py в reku/.
+    ИСКЛЮЧЕНИЕ: install.ps1 кладёт код в %LOCALAPPDATA%\\Programs\\<APP_NAME> и
+    запускает его исходниками (venv python, БЕЗ заморозки в .exe) — это тоже
+    прод-инсталляция, хоть и не frozen: данные обязаны пережить обновление кода
+    (install.ps1 заменяет reku/ целиком при апдейте) и явный вопрос при удалении,
+    а не лежать рядом с кодом в Program Files-подобном каталоге. Поэтому если
+    родитель пакета совпадает с этим путём (регистронезависимо) — ведём себя как
+    frozen. Обычные dev-чекауты (git clone куда угодно ещё) поведения не меняют.
 
     Результат кэшируется на уровне модуля (_RESOLVED_DATA_DIR) и считается ОДИН
     РАЗ за жизнь процесса. Без этого случай, когда первый вызов вернул СТАРЫЙ
@@ -61,7 +68,18 @@ def data_dir() -> str:
         new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
         _RESOLVED_DATA_DIR = _migrate_data_dir(new)
     else:
-        _RESOLVED_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        installed_root = (os.path.join(local_appdata, "Programs", APP_NAME)
+                           if local_appdata else None)
+        if installed_root and (os.path.normcase(os.path.normpath(root))
+                                == os.path.normcase(os.path.normpath(installed_root))):
+            # Прод-установка install.ps1, запущенная из исходников (см. docstring
+            # выше) — данные всё равно уходят в %APPDATA%, а не остаются в InstallDir.
+            new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
+            _RESOLVED_DATA_DIR = _migrate_data_dir(new)
+        else:
+            _RESOLVED_DATA_DIR = root
     return _RESOLVED_DATA_DIR
 
 

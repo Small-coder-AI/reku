@@ -44,6 +44,34 @@ def _reset_data_dir_cache():
     config._RESOLVED_DATA_DIR = None
 
 
+@contextlib.contextmanager
+def fake_installed_package(local_appdata, appdata):
+    """Подменяет config.__file__ так, будто пакет лежит в %LOCALAPPDATA%\\Programs\\Reku
+    (именно туда install.ps1 кладёт код, запуская его исходниками — БЕЗ заморозки в
+    .exe), плюс %LOCALAPPDATA%/%APPDATA% на время блока. Нужно, чтобы проверить ветку
+    data_dir(), которая опознаёт такую прод-инсталляцию из исходников и уводит данные
+    в %APPDATA%\\Reku, а не оставляет их рядом с кодом (иначе install.ps1 -Uninstall
+    или обновление кода стирают модели ~3 ГБ, см. Invoke-Uninstall в install.ps1)."""
+    old_file = config.__file__
+    old_local = os.environ.get("LOCALAPPDATA")
+    old_appdata = os.environ.get("APPDATA")
+    config.__file__ = os.path.join(local_appdata, "Programs", "Reku", "reku", "config.py")
+    os.environ["LOCALAPPDATA"] = local_appdata
+    os.environ["APPDATA"] = appdata
+    try:
+        yield
+    finally:
+        config.__file__ = old_file
+        if old_local is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = old_local
+        if old_appdata is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = old_appdata
+
+
 # data_dir() из исходников == корень репозитория (родитель пакета reku/), а НЕ
 # каталог config.py — иначе в dev-режиме config.json/models/ ищутся не там, где
 # реально лежат (баг переезда config.py в reku/ в Task 5: см. корневой config.json
@@ -116,6 +144,37 @@ with tempfile.TemporaryDirectory() as _appdata:
                 os.path.isfile(os.path.join(_old, "config.json")))
     ok &= check("отказ переноса: новый каталог НЕ создан (ворота миграции открыты)",
                 not os.path.exists(_new))
+
+# data_dir(): "прод-инсталляция из исходников" — install.ps1 кладёт код в
+# %LOCALAPPDATA%\Programs\Reku и запускает python'ом (БЕЗ заморозки в .exe), но это
+# ВСЁ РАВНО прод-установка: данные должны уйти в %APPDATA%\Reku, а не остаться рядом
+# с кодом (иначе install.ps1 -Uninstall/обновление кода стирают модели ~3 ГБ)
+with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _pdata:
+    with fake_installed_package(_local, _pdata):
+        _reset_data_dir_cache()
+        d = config.data_dir()
+    ok &= check("data_dir прод-инсталляция из исходников = %APPDATA%\\Reku",
+                d == os.path.join(_pdata, "Reku"))
+
+# сравнение пути пакета с LOCALAPPDATA\Programs\Reku — регистронезависимое
+with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _pdata:
+    with fake_installed_package(_local, _pdata):
+        config.__file__ = config.__file__.replace("Programs", "PROGRAMS")
+        _reset_data_dir_cache()
+        d = config.data_dir()
+    ok &= check("data_dir прод-путь: сравнение регистронезависимо",
+                d == os.path.join(_pdata, "Reku"))
+
+# dev-чекаут НЕ по адресу LOCALAPPDATA\Programs\Reku (обычный git clone где угодно) —
+# поведение не меняется: данные остаются в корне чекаута, как и раньше
+with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _pdata:
+    with fake_installed_package(_local, _pdata):
+        _dev_root = os.path.join(_local, "Dev", "whisper_ptt")
+        config.__file__ = os.path.join(_dev_root, "reku", "config.py")
+        _reset_data_dir_cache()
+        d = config.data_dir()
+    ok &= check("data_dir дев-чекаут вне Programs\\Reku = корень чекаута",
+                d == _dev_root)
 
 # новые дефолты конфига
 c = config.Config()
