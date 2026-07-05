@@ -22,6 +22,5 @@ pyperclip==1.11.0
 # десктопный UI (gui.py) — основной интерфейс
 PySide6==6.11.1
 
-# legacy: старый трей на pystray (tray.py) — заменён на gui.py, можно удалить
-pystray==0.19.5
-Pillow
+# только для сборки иконки (make_ico.py пишет .ico через PIL)
+Pillow==12.2.0
