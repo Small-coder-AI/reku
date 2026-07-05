@@ -25,19 +25,31 @@ def model_path(model: str) -> str:
     return os.path.join(model_cache_dir(), model.replace("/", "_"))
 
 
+_OV_MARKER = ".download_complete"
+
+
 def is_cached(model: str) -> bool:
-    """Скачана ли модель (есть ли model.bin в её каталоге)."""
-    return os.path.isfile(os.path.join(model_path(model), "model.bin"))
+    """Скачана ли модель: model.bin (CT2) либо маркер завершённости (OV).
+    Для OV маркер надёжнее перечня файлов — состав репо может меняться."""
+    p = model_path(model)
+    return (os.path.isfile(os.path.join(p, "model.bin"))
+            or os.path.isfile(os.path.join(p, _OV_MARKER)))
 
 
-def ensure_downloaded(model: str, on_progress=None) -> str:
-    """Гарантирует наличие модели локально. Возвращает путь к ней.
+def ensure_downloaded(model: str, kind: str = "ct2", on_progress=None) -> str:
+    """Гарантирует наличие модели локально. kind: 'ct2' (faster-whisper)
+    или 'ov' (репо OpenVINO с HF через snapshot_download; возобновляемо).
     on_progress(model) зовётся один раз перед началом скачивания (для UI)."""
     p = model_path(model)
     if is_cached(model):
         return p
     if on_progress:
         on_progress(model)
-    from faster_whisper.utils import download_model
-    download_model(model, output_dir=p)
+    if kind == "ov":
+        from huggingface_hub import snapshot_download
+        snapshot_download(model, local_dir=p)
+        open(os.path.join(p, _OV_MARKER), "w").close()
+    else:
+        from faster_whisper.utils import download_model
+        download_model(model, output_dir=p)
     return p

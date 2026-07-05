@@ -10,6 +10,10 @@ config.json
 # скачанные модели (model_store кладёт сюда; в .exe — в %APPDATA%\whisper_ptt\models)
 models/
 
+# бенч (личные записи голоса) и кэш компиляции OpenVINO
+bench_audio/
+ov_cache/
+
 # артефакты
 _preview_*.png
 *.log

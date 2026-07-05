@@ -24,10 +24,13 @@ import gui_theme as T
 from gui_widgets import MicOrb, WaveformStrip, _c
 
 # карты для комбобоксов настроек
-MODELS = ["large-v3", "large-v2", "medium", "small", "base", "tiny"]
-COMPUTES = ["float16", "int8_float16", "int8", "float32"]
-DEVICES = [("Авто", "auto"), ("GPU (CUDA)", "cuda"), ("CPU", "cpu"),
-           ("API (облако)", "api")]
+MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
+# "auto" — валидное значение конфига (дефолт); без него «применить настройки»
+# молча подменяло compute_type на float16 и зря перегружало модель
+COMPUTES = ["auto", "float16", "int8_float16", "int8", "float32"]
+DEVICES = [("Авто", "auto"), ("GPU (CUDA)", "cuda"),
+           ("Intel GPU (OpenVINO)", "igpu"), ("Intel NPU (эксперимент)", "npu"),
+           ("CPU", "cpu"), ("API (облако)", "api")]
 HOTKEYS = [("Right Ctrl", "ctrl_r"), ("Left Ctrl", "ctrl_l"),
            ("Right Alt", "alt_r"), ("Caps Lock", "caps_lock"),
            ("Right Shift", "shift_r"), ("F8", "f8"), ("F9", "f9")]
@@ -40,6 +43,17 @@ class Bridge(QObject):
     stateChanged = Signal(str)
     resultReady = Signal(str)
     levelChanged = Signal(float)
+
+
+def _safe_engine_call(fn, bridge):
+    """Зов метода движка в фоновом потоке: ошибка -> статус в UI, а не
+    молчаливая смерть потока (иначе окно вечно висит на «Скачиваю…»)."""
+    try:
+        fn()
+    except Exception as e:
+        print(f"[engine] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        if bridge is not None:
+            bridge.stateChanged.emit(f"ошибка: {str(e)[:120]}")
 
 
 # ── заголовок окна (перетаскивание + кнопки) ─────────────────
@@ -363,7 +377,26 @@ class MainWindow(QWidget):
         if self.engine and (c.model, c.device, c.compute_type) != old:
             import threading
             self.set_state("loading")
-            threading.Thread(target=self.engine.reload_model, daemon=True).start()
+            threading.Thread(target=lambda: self._reload_with_rollback(old),
+                             daemon=True).start()
+
+    def _reload_with_rollback(self, old):
+        """reload_model в фоне; при ошибке — откатить model/device/compute_type
+        в config.json и поднять прежний рабочий бэкенд. Иначе нерабочий выбор
+        (нет такого устройства / модель не поднялась) застревает в конфиге,
+        и каждый следующий запуск приложения падает так же."""
+        import config as _cfg
+        try:
+            self.engine.reload_model()
+        except Exception as e:
+            print(f"[engine] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            c = self.cfg
+            c.model, c.device, c.compute_type = old
+            _cfg.save(c)
+            if self.bridge is not None:
+                self.bridge.stateChanged.emit(
+                    f"ошибка: {str(e)[:100]} — настройки откачены")
+            _safe_engine_call(self.engine.reload_model, self.bridge)  # прежний бэкенд
 
     def hide_to_tray(self):
         self.hide()
@@ -455,7 +488,8 @@ def main():
     bridge.stateChanged.connect(on_tray_state)
 
     win.show()
-    threading.Thread(target=engine.start, daemon=True).start()
+    threading.Thread(target=lambda: _safe_engine_call(engine.start, bridge),
+                     daemon=True).start()
     sys.exit(app.exec())
 
 
