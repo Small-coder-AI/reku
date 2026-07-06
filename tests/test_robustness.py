@@ -90,23 +90,15 @@ except TypeError:
 ok &= check("None language_probability не роняет transcribe", not crashed)
 ok &= check("текст прошёл (страж не сработал на None)", out == "привет")
 
-# ── 4. миграция конфига: старый латинский промпт -> русский якорь + hotwords ──
+# ── 4. load: кастомные значения сохраняются, недостающие поля — из дефолтов ──
 import json
 _cfg_path = os.path.join(tempfile.mkdtemp(), "config.json")
 with open(_cfg_path, "w", encoding="utf-8") as f:
-    json.dump({"initial_prompt": config._LEGACY_INITIAL_PROMPT, "hotwords": ""}, f)
-migrated = config.load(_cfg_path)
-ok &= check("миграция: initial_prompt стал русским якорем",
-            migrated.initial_prompt == config.Config.initial_prompt)
-ok &= check("миграция: бренды переехали в hotwords",
-            migrated.hotwords == config._LEGACY_INITIAL_PROMPT)
-
-# кастомный промпт пользователя НЕ трогаем
-with open(_cfg_path, "w", encoding="utf-8") as f:
-    json.dump({"initial_prompt": "мой свой промпт", "hotwords": "OData"}, f)
+    json.dump({"initial_prompt": "мой свой промпт", "hotwords": "PostgreSQL"}, f)
 keep = config.load(_cfg_path)
 ok &= check("кастомный промпт не перезаписан", keep.initial_prompt == "мой свой промпт")
-ok &= check("кастомные hotwords не тронуты", keep.hotwords == "OData")
+ok &= check("кастомные hotwords не тронуты", keep.hotwords == "PostgreSQL")
+ok &= check("недостающие поля взяты из дефолтов", keep.beam_size == config.Config.beam_size)
 
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)

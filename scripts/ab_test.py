@@ -8,7 +8,7 @@
 
 Метрика «% смешанных слов» — слова, где в ОДНОМ токене есть и кириллица, и
 латиница (это и есть симптом). Меньше = лучше. Печатает и сами расшифровки,
-чтобы проверить, что бренды (GitHub, OData) при этом не «обрусели».
+чтобы проверить, что бренды (GitHub, CUDA) при этом не «обрусели».
 
 Конфиги:
   A — как было: латинский initial_prompt, авто-язык (воспроизводит баг)
@@ -26,7 +26,7 @@ from reku import config
 
 CYR = re.compile(r"[А-Яа-яЁё]")
 LAT = re.compile(r"[A-Za-z]")
-BRANDS = "Claude Code, GitHub, Docker, 1С, faster-whisper, Postgres, OData."
+BRANDS = "Claude Code, GitHub, Docker, PostgreSQL, faster-whisper, CUDA."
 
 COMMON = dict(beam_size=5, vad_filter=True,
               condition_on_previous_text=False, no_repeat_ngram_size=3)
@@ -58,7 +58,7 @@ def get_audio():
     import sounddevice as sd
     secs = 18
     print(f"\n>>> Говори ~{secs} c по-РУССКИ с терминами "
-          f"(репозиторий, HuggingFace, CUDA, опенсорс, GitHub, бэкенд)…")
+          f"(репозиторий, HuggingFace, CUDA, опенсорс, Docker, бэкенд)…")
     print(">>> Запись пошла!")
     audio = sd.rec(int(secs * 16000), samplerate=16000, channels=1, dtype="float32")
     sd.wait()

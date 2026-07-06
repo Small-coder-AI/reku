@@ -114,8 +114,7 @@ class Config:
     # внутри русских слов (латинский промпт раньше тянул латинские сабворды). Сами
     # термины держим отдельно в hotwords — точечный биас без стилевого «утекания».
     initial_prompt: str = "Это диктовка на русском языке."
-    hotwords: str = ("Claude Code, GitHub, Docker, 1С, "
-                     "faster-whisper, Postgres, OData.")   # словарь терминов (sot_prev-биас)
+    hotwords: str = ""               # словарь терминов: свои бренды/термины через запятую (sot_prev-биас)
     vad_filter: bool = True          # режет тишину/шум до распознавания (главная защита)
     condition_on_previous_text: bool = False  # False = меньше петель-повторов
     no_repeat_ngram_size: int = 3    # запрет повтора n-грамм при декоде (0 = выкл)
@@ -136,24 +135,6 @@ class Config:
         return self.language or None
 
 
-# старый латинский дефолт initial_prompt (до фикса латиницы) — мигрируем на лету
-_LEGACY_INITIAL_PROMPT = ("Claude Code, GitHub, Docker, 1С, "
-                          "faster-whisper, Postgres, OData.")
-
-
-def _migrate(cfg: Config) -> bool:
-    """Чинит конфиги старых установок. Возвращает True, если что-то поменялось.
-    Латиница-внутри-слов: старый латинский initial_prompt -> русский якорь, а бренды
-    переезжают в hotwords (точечный биас). Трогаем ТОЛЬКО нетронутый старый дефолт —
-    свой кастомный промпт пользователя не перезаписываем."""
-    if cfg.initial_prompt.strip() == _LEGACY_INITIAL_PROMPT:
-        cfg.initial_prompt = Config.initial_prompt        # новый русский якорь
-        if not cfg.hotwords.strip():
-            cfg.hotwords = _LEGACY_INITIAL_PROMPT          # бренды -> hotwords
-        return True
-    return False
-
-
 def load(path: str = CONFIG_PATH) -> Config:
     """Грузит конфиг; недостающие поля берёт из дефолтов; создаёт файл, если нет."""
     cfg = Config()
@@ -167,9 +148,6 @@ def load(path: str = CONFIG_PATH) -> Config:
                     setattr(cfg, k, v)
         except (json.JSONDecodeError, OSError) as e:
             print(f"[config] не смог прочитать {path}: {e}; беру дефолты")
-        if _migrate(cfg):
-            save(cfg, path)
-            print("[config] миграция: латинский промпт -> русский якорь + hotwords")
     else:
         save(cfg, path)
         print(f"[config] создан {path}")

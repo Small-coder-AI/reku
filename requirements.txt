@@ -1,11 +1,10 @@
-# Reku — рабочие версии (GPU-инференс на RTX 3050, CUDA 12 / cuDNN 9).
-# Точные пины снимем через `pip freeze` после установки — это верхнеуровневый набор.
+# Reku — верхнеуровневые пины зависимостей. Полный срез окружения — requirements.lock.txt.
 faster-whisper==1.2.1
 ctranslate2==4.7.2
 
 # CUDA-библиотеки (pip-пакеты nvidia-*). DLL кладутся в site-packages/nvidia/<lib>/bin,
-# dictate.py добавляет эти каталоги в PATH до импорта faster_whisper.
-# На машинах без NVIDIA (напр. ноут Honor) можно не ставить: grep -v '^nvidia-'.
+# cuda_setup.py добавляет эти каталоги в PATH до импорта faster_whisper.
+# На машинах без NVIDIA можно не ставить: grep -v '^nvidia-'.
 nvidia-cublas-cu12==12.9.2.10
 nvidia-cuda-nvrtc-cu12==12.9.86
 nvidia-cudnn-cu12==9.23.0.39

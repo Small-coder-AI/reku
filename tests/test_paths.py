@@ -169,7 +169,7 @@ with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _
 # поведение не меняется: данные остаются в корне чекаута, как и раньше
 with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _pdata:
     with fake_installed_package(_local, _pdata):
-        _dev_root = os.path.join(_local, "Dev", "whisper_ptt")
+        _dev_root = os.path.join(_local, "Dev", "Reku")
         config.__file__ = os.path.join(_dev_root, "reku", "config.py")
         _reset_data_dir_cache()
         d = config.data_dir()

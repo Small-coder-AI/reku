@@ -1,6 +1,6 @@
 ﻿# install.ps1 — установка Reku одной командой.
 #   irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | iex
-# Локальная отладка:  .\install.ps1 -SourcePath D:\Dev\Whisper_PTT\whisper_ptt
+# Локальная отладка:  .\install.ps1 -SourcePath C:\path\to\reku
 # Удаление:           .\install.ps1 -Uninstall
 param(
     [string]$SourcePath = "",

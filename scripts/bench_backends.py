@@ -70,8 +70,8 @@ def record() -> None:
 
 
 # ── конфигурации бенча ──────────────────────────────────────────
-INITIAL_PROMPT = ("Claude Code, GitHub, Docker, 1С, "
-                  "faster-whisper, Postgres, OData.")
+INITIAL_PROMPT = ("Claude Code, GitHub, Docker, PostgreSQL, "
+                  "faster-whisper, CUDA.")
 LANG = "ru"
 
 # CT2 large-v3 исключена из матрицы: +3.1 ГБ докачки при слабом интернете,
