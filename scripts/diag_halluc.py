@@ -29,7 +29,7 @@ def make(kind, sec=4):
         t = np.arange(n) / sr
         return (0.01 * np.sin(2 * np.pi * 50 * t) + 0.003 * np.random.randn(n)).astype(np.float32)
 
-PROMPT = "Claude Code, GitHub, Docker, 1С, faster-whisper, Postgres, OData."
+PROMPT = "Claude Code, GitHub, Docker, PostgreSQL, faster-whisper, CUDA."
 
 def run(tag, audio, **kw):
     segs, info = m.transcribe(audio, language=None, **kw)

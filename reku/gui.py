@@ -301,7 +301,7 @@ class MainWindow(QWidget):
         self.vocab_edit = QPlainTextEdit()
         self.vocab_edit.setPlainText(self.cfg.hotwords)
         self.vocab_edit.setPlaceholderText(
-            "термины через запятую или с новой строки\n(GitHub, OData, 1С, Docker…)")
+            "термины через запятую или с новой строки\n(например: GitHub, Docker, PostgreSQL…)")
         self.vocab_edit.setFixedHeight(76)
         lay.addWidget(self.vocab_edit)
 

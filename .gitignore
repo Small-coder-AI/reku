@@ -30,6 +30,13 @@ selftest.json
 check.png
 requirements.effective.txt
 
+# служебные каталоги тулз
+.superpowers/
+.pytest_cache/
+
+# локальный архив внутренних планов/спеков (в публичный репозиторий не идёт)
+docs-archive/
+
 # IDE
 .vscode/
 .idea/
