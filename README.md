@@ -1,20 +1,27 @@
-# whisper_ptt
+# Reku
 
-Локальная диктовка на Windows: голос → текст в активное окно по push-to-talk.
-Полностью офлайн. Два движка под одним контрактом: faster-whisper/CTranslate2
-(NVIDIA CUDA или CPU) и OpenVINO GenAI (Intel iGPU/NPU). Самая тяжёлая модель
-(`large-v3`) работает быстро на обоих: ~0.7 с на короткую фразу (RTX 3050,
-float16) и ~1–2 с на фразы 10–24 с (Intel Arc 140T, int8).
+Локальная диктовка для Windows: зажми клавишу — скажи — текст появится у курсора.
+Полностью офлайн: звук не покидает компьютер. Русский и английский (и ещё 90+ языков Whisper).
+Два движка под одним капотом: NVIDIA CUDA (faster-whisper) и Intel iGPU/NPU (OpenVINO) —
+программа сама выбирает лучшее для твоего железа, на слабом железе сама берёт модель полегче.
 
-## Запуск
+## Установка
+
+Открой PowerShell и выполни:
 
 ```powershell
-# десктопный UI (основной) — окно + трей
-.\.venv\Scripts\pythonw.exe gui.py      # без консоли
-.\.venv\Scripts\python.exe  gui.py      # с консолью (логи/латентность)
+irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | iex
+```
 
-# только консоль, без окна
-.\.venv\Scripts\python.exe dictate.py
+Скрипт сам определит железо, поставит только нужное (~1–3 ГБ) и сделает ярлыки.
+Модель распознавания скачается при первом запуске. Обновление — та же команда.
+Удаление: скачать install.ps1 и запустить с ключом `-Uninstall`.
+
+## Использование
+
+```powershell
+.venv\Scripts\pythonw.exe -m reku      # GUI (окно + трей, без консоли)
+.venv\Scripts\python.exe -m reku       # GUI (с консолью для логов/латентности)
 ```
 
 Окно: тёмное безрамочное, mic-orb (статус цветом), живой вэйвформ при записи,
@@ -22,32 +29,13 @@ float16) и ~1–2 с на фразы 10–24 с (Intel Arc 140T, int8).
 (модель/устройство/точность/хоткей/режим/VAD/фильтр). Закрытие окна → сворачивание
 в трей; выход — из меню трея.
 
-Дождись `Готово…` (модель грузится ~6 с) — затем зажми хоткей (по умолчанию правый
+Дождись **Готово…** (модель грузится ~6 с) — затем зажми хоткей (по умолчанию правый
 Ctrl), скажи фразу, отпусти. Текст вставится по курсору. **Держи запущенным один
-инстанс** (gui.py *или* dictate.py) — каждый грузит свою копию модели в 8 ГБ VRAM.
+инстанс** — каждый грузит свою копию модели в VRAM.
 
-## Сборка .exe (переносимый, в автозапуск)
+Трей-меню переключает режим и язык на лету (пишет в `config.json`).
 
-```powershell
-.\build.ps1 -Clean              # PyInstaller --onedir --windowed -> dist\whisper_ptt\
-.\build.ps1 -Clean -Installer   # + setup.exe (Inno Setup) -> installer\whisper_ptt-setup.exe
-.\.venv\Scripts\python.exe test_frozen_smoke.py   # проверка: GPU реально работает в сборке
-```
-
-Результат — `dist\whisper_ptt\whisper_ptt.exe` (двойной клик, иконка в трее). Модель
-(~3 ГБ) **не вшита** — качается при первом запуске в `%APPDATA%\whisper_ptt\models\`.
-
-**Инсталлятор** (`whisper_ptt.iss`, Inno Setup, per-user — без админ-прав): `whisper_ptt-setup.exe`
-ставит в `%LOCALAPPDATA%\Programs\whisper_ptt`, делает ярлык в Пуске (+ опц. рабочий стол),
-опц. автозапуск (на установленный exe) и деинсталлятор. Нужен Inno Setup:
-`winget install JRSoftware.InnoSetup`.
-Главный риск сборки — CUDA-DLL: `cuda_setup.py` во frozen добавляет `_internal\nvidia\*\bin`
-в PATH до импорта faster-whisper; `test_frozen_smoke.py` проверяет, что `device=cuda`
-(а не тихий CPU-фолбэк). **Автозапуск** — чекбокс «Запускать при старте Windows» в
-настройках (пишет в `HKCU\…\Run` путь к `.exe`). Файлы сборки: `whisper_ptt.spec`,
-`build.ps1`, `make_ico.py`, `autostart.py`, `test_frozen_smoke.py`.
-
-## Настройка — `config.json`
+## Настройки — config.json
 
 Создаётся при первом запуске. Ключевое:
 
@@ -70,27 +58,36 @@ Ctrl), скажи фразу, отпусти. Текст вставится по
 | `insert_method` | `paste` | `paste` (буфер+Ctrl+V) или `type` (посимвольно) |
 
 **Латиница внутри русских слов** лечится связкой `language="ru"` + русский `initial_prompt`
-+ термины в `hotwords` (см. `ab_test.py` — сравнивает конфиги на одном дубле голоса и
++ термины в `hotwords` (см. `scripts/ab_test.py` — сравнивает конфиги на одном дубле голоса и
 печатает «% смешанных слов»). **Тема** переключается в настройках на лету; `system`
 следует Windows. Если модель не загрузилась (нет сети/устройства) — окно показывает
 **«Ошибка»** с причиной, а не виснет в «Загрузке».
 
-Трей-меню тоже переключает `mode` и `language` на лету (пишет в config.json).
+## Разработка
 
-## Файлы
+```powershell
+git clone https://github.com/Small-coder-AI/reku && cd reku
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m reku        # запуск
+.venv\Scripts\python -m pytest tests/ -v
+```
 
-- `gui.py` — **десктопный UI на PySide6** (окно + трей). Основная точка входа.
-- `gui_theme.py` — палитра + QSS. `gui_widgets.py` — MicOrb + WaveformStrip.
-- `dictate.py` — ядро `DictationApp` (запись→распознавание→вставка) + консольный запуск.
-- `config.py` / `config.json` — настройки.
-- `postprocess.py` — фильтр галлюцинаций (чистые функции).
-- `cuda_setup.py` — кладёт nvidia-DLL в PATH (см. ниже). **Импортируется первым.**
-- `requirements.txt` (верхнеуровневые пины) / `requirements.lock.txt` (полный freeze).
-- `diag.py`, `diag_halluc.py` — диагностика GPU и галлюцинаций.
-- `test_postprocess.py`, `selftest_pipeline.py`, `smoke_gui.py` — тесты.
-- `render_preview.py` — офскрин-рендер UI в PNG (для доводки вида).
+Сборка exe (запасной путь):
 
-## Почему `cuda_setup.py` (важная заметка про GPU)
+```powershell
+.\packaging\build.ps1              # обычная сборка (dist\Reku\Reku.exe)
+.\packaging\build.ps1 -Installer   # + инсталлятор (installer\Reku-setup.exe)
+```
+
+Результат: `dist\Reku\Reku.exe` (двойной клик, иконка в трее). Модель (~3 ГБ) **не вшита** — качается при первом запуске в `%APPDATA%\Reku\models\`.
+
+**Инсталлятор** (Inno Setup, per-user — без админ-прав) ставит в `%LOCALAPPDATA%\Programs\Reku`, делает ярлык в Пуске (+ опц. рабочий стол),
+опц. автозапуск и деинсталлятор. Нужен Inno Setup: `winget install JRSoftware.InnoSetup`.
+
+## Как это работает
+
+### Почему cuda_setup.py (важная заметка про GPU)
 
 CTranslate2 на Windows грузит `cublas64_12.dll` / `cudnn*.dll` через голый
 `LoadLibrary`, который ищет их только рядом с `ctranslate2.dll`, в System32 и в
@@ -101,7 +98,7 @@ faster_whisper. Без этого `encode()` падает: `cublas64_12.dll cann
 (это похоже на «работает на CPU», но на деле — краш в фоновом потоке).
 `nvidia-cuda-runtime-cu12` не нужен — ct2 линкует cudart статически.
 
-## Intel iGPU/NPU (OpenVINO) — заметка
+### Intel iGPU/NPU (OpenVINO)
 
 На машинах без NVIDIA `auto` выбирает Intel-графику через OpenVINO GenAI:
 готовые int8-модели качаются с HF (`OpenVINO/whisper-*-int8-ov`, карта —
@@ -109,15 +106,31 @@ faster_whisper. Без этого `encode()` падает: `cublas64_12.dll cann
 конкретный GPU (десятки секунд, разово), дальше — кэш в `ov_cache/` и старт
 ~2–3 с. VAD работает (Silero из faster-whisper), фильтры галлюцинаций
 работают; `min_language_probability` в этом пути НЕ действует (движок не
-сообщает уверенность в языке), decode — greedy (beam_size игнорируется).
+сообщает уверенность в языке), decode — greedy (beam_size игнорируется); `hotwords`
+(словарь терминов) в этом пути тоже не действуют — движок их не принимает.
 Скорость проверена на Arc 140T; на слабых iGPU (UHD 6xx и т.п.) large-v3
 может компилироваться/работать долго — тогда выбери `large-v3-turbo` или
 `small` в настройках. Если OpenVINO в auto-режиме не поднялся вовсе
 (драйвер/память) — приложение само откатывается на CPU + small.
 На машинах без NVIDIA пакеты `nvidia-*` можно не ставить
 (`grep -v '^nvidia-' requirements.txt`). Бенч скорости на своих фразах:
-`python bench_backends.py record`, затем `run` (отчёт в
+`python scripts/bench_backends.py record`, затем `run` (отчёт в
 `bench_audio/bench_results.md`).
+
+## Файлы
+
+- `reku/gui.py` — **десктопный UI на PySide6** (окно + трей). Основная точка входа.
+- `reku/gui_theme.py` — палитра + QSS. `reku/gui_widgets.py` — MicOrb + WaveformStrip.
+- `reku/dictate.py` — ядро `DictationApp` (запись→распознавание→вставка).
+- `reku/config.py` / `config.json` — настройки.
+- `reku/postprocess.py` — фильтр галлюцинаций (чистые функции).
+- `reku/cuda_setup.py` — кладёт nvidia-DLL в PATH (см. ниже). **Импортируется первым.**
+- `requirements.txt` (верхнеуровневые пины) / `requirements.lock.txt` (полный freeze).
+- `reku/backends.py` — выбор и управление бэкендами (faster-whisper, OpenVINO).
+- `reku/model_store.py` — загрузка и кэширование моделей.
+- `tests/` — модульные тесты.
+- `scripts/` — служебные скрипты (make_ico.py, bench_backends.py).
+- `packaging/` — сборка .exe (build.ps1, reku.spec, reku.iss).
 
 ## Что проверено и что нет
 

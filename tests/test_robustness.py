@@ -1,13 +1,15 @@
 """Тесты надёжности (Фаза 1): сбой загрузки -> состояние 'error', целостность
 кэша модели, guard None language_probability. GPU не нужен.
-Запуск: python test_robustness.py"""
+Запуск (из корня репозитория): python tests/test_robustness.py"""
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempfile
 from types import SimpleNamespace as S
 
 import numpy as np
 
-import config
+from reku import config
 
 
 def check(name, cond):
@@ -18,8 +20,8 @@ def check(name, cond):
 ok = True
 
 # ── 1. load_model: сбой backend.load() -> состояние 'error', backend=None ──
-import backends
-from dictate import DictationApp
+from reku import backends
+from reku.dictate import DictationApp
 
 states = []
 
@@ -48,7 +50,7 @@ ok &= check("backend обнулён после сбоя", app.backend is None)
 ok &= check("_last_error заполнен", bool(app._last_error))
 
 # ── 2. is_cached: полный набор vs оборванная докачка ──
-import model_store
+from reku import model_store
 
 _tmp = tempfile.mkdtemp()
 config.data_dir = lambda: _tmp        # монкипатч источника правды путей

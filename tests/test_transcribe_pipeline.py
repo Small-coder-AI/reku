@@ -1,9 +1,13 @@
 """Тест политики transcribe (порог языка + постпроцессинг) на фейковом бэкенде.
-GPU не нужен. Запуск: python test_transcribe_pipeline.py"""
+GPU не нужен. Запуск (из корня репозитория): python tests/test_transcribe_pipeline.py"""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from types import SimpleNamespace as S
-import config
-from dictate import DictationApp
+from reku import config
+from reku.dictate import DictationApp
 
 
 def check(name, cond):

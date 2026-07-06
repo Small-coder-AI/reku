@@ -1,4 +1,4 @@
-"""Конфиг whisper_ptt. Хранится в config.json рядом со скриптом.
+"""Конфиг Reku. Хранится в config.json в каталоге данных приложения (см. data_dir()).
 
 Цель — лёгкий интерфейс, в который подгружаются модели: всё, что можно
 переключить (модель, точность, хоткей, режим, язык, фильтры), живёт здесь.
@@ -9,15 +9,78 @@ import sys
 import json
 from dataclasses import dataclass, asdict, fields
 
+from reku import APP_NAME   # безопасно: reku/__init__.py ничего не импортирует (цикла нет)
+
+_OLD_DIR_NAME = "whisper_ptt"   # имя каталога данных до переименования продукта (июль 2026)
+
+_RESOLVED_DATA_DIR = None   # кэш результата data_dir() на весь процесс (см. её docstring)
+
+
+def _migrate_data_dir(new: str) -> str:
+    """Переименовать старый каталог данных (whisper_ptt) в новый (Reku), чтобы модели
+    (~3 ГБ) не перекачивались заново после переименования продукта. Возвращает
+    РАБОЧИЙ каталог: new — когда переносить нечего, новый уже есть или перенос
+    удался; old — когда переименование не удалось (каталог занят и т.п.): тогда
+    продолжаем работать со старым, а перенос попробуется при следующем запуске.
+    Возврат нового пути при ошибке был бы капканом: приложение тут же создало бы
+    пустой новый каталог (makedirs в save()/model_store), ворота миграции
+    `not os.path.exists(new)` закрылись бы навсегда — модели осиротели бы."""
+    old = os.path.join(os.path.dirname(new), _OLD_DIR_NAME)
+    if os.path.isdir(old) and not os.path.exists(new):
+        try:
+            os.replace(old, new)
+            print(f"[config] каталог данных перенесён: {old} -> {new}")
+        except OSError as e:
+            print(f"[config] не смог перенести {old} -> {new}: {e}; "
+                  f"работаю со старым каталогом", file=sys.stderr)
+            return old
+    return new
+
 
 def data_dir() -> str:
-    """Каталог данных приложения. Чистая функция (без побочных эффектов).
-    Frozen (.exe): %APPDATA%\\whisper_ptt — из Program Files писать нельзя.
-    Из исходников: каталог этого файла (удобно для разработки)."""
+    """Каталог данных приложения.
+    Frozen (.exe): %APPDATA%\\<APP_NAME> — из Program Files писать нельзя; при первом
+    обращении после обновления со старого имени мягко переносит каталог целиком
+    (см. _migrate_data_dir) — единственный побочный эффект этой функции; если
+    перенос не удался, возвращается СТАРЫЙ каталог (данные не сиротеют, попытка
+    повторится при следующем запуске).
+    Из исходников: корень репозитория (родитель пакета reku/) — там же лежат
+    config.json и models/ для разработки, как и до переезда config.py в reku/.
+    ИСКЛЮЧЕНИЕ: install.ps1 кладёт код в %LOCALAPPDATA%\\Programs\\<APP_NAME> и
+    запускает его исходниками (venv python, БЕЗ заморозки в .exe) — это тоже
+    прод-инсталляция, хоть и не frozen: данные обязаны пережить обновление кода
+    (install.ps1 заменяет reku/ целиком при апдейте) и явный вопрос при удалении,
+    а не лежать рядом с кодом в Program Files-подобном каталоге. Поэтому если
+    родитель пакета совпадает с этим путём (регистронезависимо) — ведём себя как
+    frozen. Обычные dev-чекауты (git clone куда угодно ещё) поведения не меняют.
+
+    Результат кэшируется на уровне модуля (_RESOLVED_DATA_DIR) и считается ОДИН
+    РАЗ за жизнь процесса. Без этого случай, когда первый вызов вернул СТАРЫЙ
+    каталог (перенос не удался — занят и т.п.), а к следующему вызову препятствие
+    исчезло бы, на середине работы переключил рабочий каталог на новый — а
+    CONFIG_PATH (вычислен один раз при импорте, из первого же вызова data_dir())
+    продолжал бы смотреть на старый; настройки, сохранённые после переключения,
+    писались бы не туда и терялись. Кэш фиксирует каталог на весь процесс."""
+    global _RESOLVED_DATA_DIR
+    if _RESOLVED_DATA_DIR is not None:
+        return _RESOLVED_DATA_DIR
     if getattr(sys, "frozen", False):
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        return os.path.join(appdata, "whisper_ptt")
-    return os.path.dirname(os.path.abspath(__file__))
+        new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
+        _RESOLVED_DATA_DIR = _migrate_data_dir(new)
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        installed_root = (os.path.join(local_appdata, "Programs", APP_NAME)
+                           if local_appdata else None)
+        if installed_root and (os.path.normcase(os.path.normpath(root))
+                                == os.path.normcase(os.path.normpath(installed_root))):
+            # Прод-установка install.ps1, запущенная из исходников (см. docstring
+            # выше) — данные всё равно уходят в %APPDATA%, а не остаются в InstallDir.
+            new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
+            _RESOLVED_DATA_DIR = _migrate_data_dir(new)
+        else:
+            _RESOLVED_DATA_DIR = root
+    return _RESOLVED_DATA_DIR
 
 
 CONFIG_PATH = os.path.join(data_dir(), "config.json")
@@ -106,7 +169,7 @@ def load(path: str = CONFIG_PATH) -> Config:
             print(f"[config] не смог прочитать {path}: {e}; беру дефолты")
         if _migrate(cfg):
             save(cfg, path)
-            print(f"[config] миграция: латинский промпт -> русский якорь + hotwords")
+            print("[config] миграция: латинский промпт -> русский якорь + hotwords")
     else:
         save(cfg, path)
         print(f"[config] создан {path}")

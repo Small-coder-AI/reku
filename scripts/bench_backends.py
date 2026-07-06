@@ -1,19 +1,20 @@
-"""Бенч бэкендов whisper_ptt: скорость/качество на реальном железе.
+"""Бенч бэкендов Reku: скорость/качество на реальном железе.
 
-Standalone-диагностика (в приложение не импортируется):
-  python bench_backends.py record   — надиктовать эталонные фразы (WAV 16 кГц)
-  python bench_backends.py run      — прогнать матрицу бэкендов, напечатать таблицу
+Standalone-диагностика (в приложение не импортируется), запуск из корня репозитория:
+  python scripts/bench_backends.py record   — надиктовать эталонные фразы (WAV 16 кГц)
+  python scripts/bench_backends.py run      — прогнать матрицу бэкендов, напечатать таблицу
 
 WAV лежат в <data_dir>/bench_audio/. Результаты — bench_results.md там же.
 """
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
 import wave
 
 import numpy as np
 
-import config
+from reku import config
 
 SR = 16000
 AUDIO_DIR = os.path.join(config.data_dir(), "bench_audio")
@@ -113,7 +114,7 @@ def _bench_ct2(model_name: str, wavs: list) -> list[dict]:
 def _ensure_ov_model(repo: str) -> str:
     """Качает OV-модель в раскладку model_store (та же папка, что у приложения).
     snapshot_download сам докачивает недостающие файлы (возобновляемо)."""
-    import model_store
+    from reku import model_store
     from huggingface_hub import snapshot_download
     path = model_store.model_path(repo)
     print(f"  модель {repo} -> {path}")

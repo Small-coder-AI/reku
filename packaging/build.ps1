@@ -1,13 +1,13 @@
-# build.ps1 — сборка переносимого whisper_ptt.exe (PyInstaller --onedir --windowed)
-# Запуск:  .\build.ps1            (обычная сборка)
-#          .\build.ps1 -Shortcut  (ещё и ярлык на рабочий стол)
+﻿# packaging\build.ps1 — сборка переносимого Reku.exe (PyInstaller --onedir --windowed)
+# Запуск (из корня репозитория):  .\packaging\build.ps1            (обычная сборка)
+#                                 .\packaging\build.ps1 -Shortcut  (ещё и ярлык на рабочий стол)
 param(
     [switch]$Shortcut,
     [switch]$Clean,
     [switch]$Installer   # ещё и собрать setup.exe через Inno Setup (ISCC)
 )
 $ErrorActionPreference = "Stop"
-$root = $PSScriptRoot
+$root = Split-Path $PSScriptRoot   # этот файл лежит в packaging/ — корень репо на уровень выше
 $py   = Join-Path $root ".venv\Scripts\python.exe"
 $pyi  = Join-Path $root ".venv\Scripts\pyinstaller.exe"
 
@@ -26,15 +26,15 @@ if ($Clean) { Remove-Item -Recurse -Force (Join-Path $root "build"),(Join-Path $
 # 2) иконка из make_icon()
 Write-Host "Генерирую app.ico..." -ForegroundColor Cyan
 Push-Location $root
-& $py make_ico.py
+& $py (Join-Path $root "scripts\make_ico.py")
 
 # 3) сборка по спеку
 Write-Host "Собираю .exe..." -ForegroundColor Cyan
-& $pyi whisper_ptt.spec --noconfirm --clean
+& $pyi (Join-Path $root "packaging\reku.spec") --noconfirm --clean
 Pop-Location
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller вернул код $LASTEXITCODE" }
 
-$exe = Join-Path $root "dist\whisper_ptt\whisper_ptt.exe"
+$exe = Join-Path $root "dist\Reku\Reku.exe"
 if (-not (Test-Path $exe)) { throw "Ожидаемый .exe не найден: $exe" }
 Write-Host "Готово: $exe" -ForegroundColor Green
 
@@ -46,16 +46,16 @@ if ($Installer) {
     }
     Write-Host "Собираю инсталлятор..." -ForegroundColor Cyan
     Push-Location $root
-    & $iscc "whisper_ptt.iss"
+    & $iscc (Join-Path $root "packaging\reku.iss")
     Pop-Location
     if ($LASTEXITCODE -ne 0) { throw "ISCC вернул код $LASTEXITCODE" }
-    Write-Host "Инсталлятор: $(Join-Path $root 'installer\whisper_ptt-setup.exe')" -ForegroundColor Green
+    Write-Host "Инсталлятор: $(Join-Path $root 'installer\Reku-setup.exe')" -ForegroundColor Green
 }
 
 # 4) опциональный ярлык на рабочем столе
 if ($Shortcut) {
     $desktop = [Environment]::GetFolderPath("Desktop")
-    $lnk = Join-Path $desktop "whisper_ptt.lnk"
+    $lnk = Join-Path $desktop "Reku.lnk"
     $ws = New-Object -ComObject WScript.Shell
     $sc = $ws.CreateShortcut($lnk)
     $sc.TargetPath = $exe

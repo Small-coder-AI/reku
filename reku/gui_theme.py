@@ -1,4 +1,4 @@
-"""Темы whisper_ptt: палитры (тёмная/светлая) + QSS. Один источник правды по цветам.
+"""Темы Reku: палитры (тёмная/светлая) + QSS. Один источник правды по цветам.
 
 Тема выбирается в config.theme: 'system' | 'dark' | 'light'. 'system' следует теме
 Windows через QStyleHints.colorScheme(). Смена темы в рантайме: set_active_theme(pal)
