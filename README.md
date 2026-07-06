@@ -16,6 +16,23 @@ the app picks whatever suits your hardware best and falls back to a lighter mode
 
 > **Note:** the app UI is currently in Russian; interface localization is on the roadmap.
 
+## Why Reku
+
+- **Big-model quality on an ordinary laptop.** Most local dictation tools run Whisper on
+  the CPU, so on a regular ultrabook they are practically limited to the small/medium
+  models — large-v3 is either too slow or won't run at all. Reku executes the full
+  large-v3 (int8) on the Intel iGPU/NPU through OpenVINO: a plain laptop without a
+  gaming GPU dictates with flagship-model accuracy. With an NVIDIA card it runs CUDA
+  at full speed instead.
+- **Actually offline.** No cloud, no account, no subscription — audio never leaves
+  the machine.
+- **Seriously tuned for Russian.** Cures the classic Whisper sores: Latin letters
+  inside Russian words and phantom "subtitle credits" in pauses. English and 90+
+  other languages work as well.
+- **One command to install, the same command to update.** The script detects your
+  hardware, installs Python by itself if missing and picks the right dependency
+  profile (CUDA / Intel / CPU).
+
 ## Install
 
 Open PowerShell and run:
