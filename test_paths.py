@@ -57,11 +57,18 @@ os.makedirs(_ov_dir, exist_ok=True)
 open(os.path.join(_ov_dir, ".download_complete"), "w").close()
 ok &= check("is_cached=True по OV-маркеру", model_store.is_cached(_ov_id) is True)
 
-# is_cached видит model.bin (CT2, существующее поведение)
+# is_cached требует ПОЛНЫЙ набор CT2-файлов (Task 1 мерджа ужесточил проверку:
+# model.bin+config.json+токенайзер, а не один model.bin — иначе оборванная
+# докачка считалась бы «готова», см. model_store._dir_complete)
 _ct2_dir = model_store.model_path("small")
 os.makedirs(_ct2_dir, exist_ok=True)
 open(os.path.join(_ct2_dir, "model.bin"), "w").close()
-ok &= check("is_cached=True по model.bin", model_store.is_cached("small") is True)
+ok &= check("is_cached=False пока нет config.json/токенайзера (оборванная докачка)",
+            model_store.is_cached("small") is False)
+open(os.path.join(_ct2_dir, "config.json"), "w").close()
+open(os.path.join(_ct2_dir, "tokenizer.json"), "w").close()
+ok &= check("is_cached=True когда каталог полон (model.bin+config.json+токенайзер)",
+            model_store.is_cached("small") is True)
 
 # ensure_downloaded(kind="ov"): зовёт huggingface_hub.snapshot_download и пишет маркер
 import huggingface_hub
