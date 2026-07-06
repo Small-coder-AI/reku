@@ -7,7 +7,7 @@ from PySide6.QtGui import (QPainter, QColor, QRadialGradient, QPen, QBrush,
                            QPainterPath, QConicalGradient)
 from PySide6.QtWidgets import QWidget
 
-import gui_theme as T
+from reku import gui_theme as T
 
 
 def _c(rgb, a=255):

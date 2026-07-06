@@ -86,7 +86,7 @@ IGPU_AUTO_SUBSTITUTE = {}
 def _cuda_available() -> bool:
     """Есть ли пригодный CUDA-GPU для CTranslate2. Любой сбой = нет GPU."""
     try:
-        import cuda_setup            # noqa: F401 — кладёт nvidia-DLL в PATH
+        from reku import cuda_setup  # noqa: F401 — кладёт nvidia-DLL в PATH
         import ctranslate2
         return ctranslate2.get_cuda_device_count() > 0
     except Exception:
@@ -173,9 +173,9 @@ class CTranslate2Backend(Backend):
         return self.model_name
 
     def load(self):
-        import cuda_setup            # noqa: F401 — строго до faster_whisper
+        from reku import cuda_setup  # noqa: F401 — строго до faster_whisper
         from faster_whisper import WhisperModel
-        import model_store
+        from reku import model_store
         src = self.model_name
         if model_store.is_cached(self.model_name):
             src = model_store.model_path(self.model_name)
@@ -230,7 +230,7 @@ class OpenVINOBackend(Backend):
                 f"выбери одну из: {', '.join(sorted(set(OV_MODEL_MAP)))}")
         import os
         import openvino_genai       # лениво: на машинах без OV не импортируется
-        import model_store
+        from reku import model_store
         cache = os.path.join(model_store._data_dir(), "ov_cache")
         os.makedirs(cache, exist_ok=True)
         dev = "NPU" if self.device == "npu" else "GPU"

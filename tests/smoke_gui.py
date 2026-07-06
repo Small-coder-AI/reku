@@ -1,12 +1,15 @@
-"""Headless-проверка проводки UI (без модели/VRAM). offscreen."""
+"""Headless-проверка проводки UI (без модели/VRAM). offscreen.
+Запуск (из корня репозитория): python tests/smoke_gui.py"""
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
-import config
-from dictate import DictationApp
-from gui import MainWindow, Bridge, make_icon
-import gui_theme as T
+from reku import config
+from reku.dictate import DictationApp
+from reku.gui import MainWindow, Bridge, make_icon
+from reku import gui_theme as T
 
 app = QApplication([])
 app.setQuitOnLastWindowClosed(False)
@@ -21,6 +24,8 @@ _ = make_icon(T.STATE_RGB["idle"])          # рисование иконки т
 print("tray available:", QSystemTrayIcon.isSystemTrayAvailable())
 
 win.show(); app.processEvents()
+
+assert win.runtime_lbl.text().startswith("Работает:")
 
 # гоняем состояния через сигналы (имитация колбэков из рабочих потоков)
 for s in ["loading", "idle", "recording", "transcribing", "idle"]:

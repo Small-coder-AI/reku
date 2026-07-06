@@ -1,17 +1,24 @@
 """Офскрин-рендер UI в PNG для самопроверки вида (без модели/движка).
-Запуск: QT_QPA_PLATFORM=offscreen python render_preview.py"""
+Запуск (из корня репозитория): QT_QPA_PLATFORM=offscreen python scripts/render_preview.py"""
 import os
+import sys
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPixmap, QPainter, QColor
 from PySide6.QtCore import Qt
 
-import config
-from gui import MainWindow
+from reku import config
+from reku.gui import MainWindow
 
 app = QApplication([])
 cfg = config.load()
+# PREVIEW_THEME=dark|light|system — отрендерить конкретную тему (для сравнения палитр)
+_theme = os.environ.get("PREVIEW_THEME")
+if _theme:
+    cfg.theme = _theme
 
 
 def compose(win, name):
@@ -21,8 +28,12 @@ def compose(win, name):
     # на серый «десктоп», чтобы видеть скругление и прозрачные поля честно
     bg = QPixmap(pm.size()); bg.fill(QColor(43, 45, 49))
     p = QPainter(bg); p.drawPixmap(0, 0, pm); p.end()
-    bg.save(rf"c:\Dev\whisper_ptt\_preview_{name}.png")
-    print("saved", name)
+    # раньше путь был захардкожен на конкретную машину (чужой диск/логин) — чинил
+    # попутно, раз уж трогал импорты в этом файле; теперь считается через ROOT
+    # (см. отчёт по Task 5)
+    suffix = f"_{_theme}" if _theme else ""
+    bg.save(os.path.join(ROOT, f"_preview_{name}{suffix}.png"))
+    print("saved", name + suffix)
 
 
 win = MainWindow(cfg)

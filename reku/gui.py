@@ -1,4 +1,4 @@
-"""whisper_ptt — десктопный UI на PySide6. Frameless, тёмный, с анимированным
+"""Reku — десктопный UI на PySide6. Frameless, тёмный, с анимированным
 orb'ом, живым вэйвформом, настройками и треем. Фронт над движком DictationApp.
 
 Запуск:  python gui.py   (или pythonw gui.py без консоли)
@@ -6,8 +6,10 @@ orb'ом, живым вэйвформом, настройками и треем.
 import os
 import sys
 
+from reku import APP_NAME
+
 if sys.stdout:
-    print("whisper_ptt UI: запускаюсь…", flush=True)
+    print(f"{APP_NAME} UI: запускаюсь…", flush=True)
 
 from PySide6.QtCore import Qt, QObject, Signal, QPoint, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
@@ -19,10 +21,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-_SINGLE_KEY = "whisper_ptt_singleton"
+_SINGLE_KEY = "reku-single-instance"
 
-import gui_theme as T
-from gui_widgets import MicOrb, WaveformStrip, _c
+from reku import gui_theme as T
+from reku.gui_widgets import MicOrb, WaveformStrip, _c
 
 # карты для комбобоксов настроек
 MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
@@ -73,7 +75,7 @@ class TitleBar(QWidget):
 
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color: {T.ACCENT}; font-size: 11px;")
-        title = QLabel("whisper_ptt"); title.setObjectName("TitleLabel")
+        title = QLabel(APP_NAME); title.setObjectName("TitleLabel")
         lay.addWidget(self.dot); lay.addWidget(title)
         lay.addStretch(1)
 
@@ -118,7 +120,7 @@ def _check_icon_url():
     if _CHECK_URL:
         return _CHECK_URL
     try:
-        import config
+        from reku import config
         from PySide6.QtCore import QPointF
         from PySide6.QtGui import QPen
         d = config.data_dir(); os.makedirs(d, exist_ok=True)
@@ -306,12 +308,16 @@ class MainWindow(QWidget):
         secS = QLabel("СИСТЕМА"); secS.setObjectName("SectionLabel"); lay.addWidget(secS)
         self.autostart_chk = QCheckBox("Запускать при старте Windows")
         try:
-            import autostart
+            from reku import autostart
             self.autostart_chk.setChecked(autostart.is_enabled())
         except Exception:
             self.autostart_chk.setEnabled(False)
         self.autostart_chk.toggled.connect(self._autostart_toggled)
         lay.addWidget(self.autostart_chk)
+
+        self.runtime_lbl = QLabel("Работает: —")
+        self.runtime_lbl.setObjectName("HintLabel")
+        lay.addWidget(self.runtime_lbl)
 
         lay.addStretch(1)
         self.apply_btn = QPushButton("Применить"); self.apply_btn.setObjectName("RecordBtn")
@@ -356,6 +362,14 @@ class MainWindow(QWidget):
             dev = " · " + label
         self.hint.setText(f"{key} · {mode}{dev}")
 
+    def _update_runtime_label(self):
+        b = getattr(self.engine, "backend", None) if self.engine else None
+        if b is None:
+            self.runtime_lbl.setText("Работает: —")
+            return
+        mdl = getattr(b, "model_name", None) or b.name
+        self.runtime_lbl.setText(f"Работает: {b.device_label} · {mdl}")
+
     # ── тема ─────────────────────────────────────────────────
     def apply_theme(self):
         """Применить тему из cfg.theme (system/dark/light). Зовётся при старте,
@@ -376,12 +390,12 @@ class MainWindow(QWidget):
 
     def _theme_changed(self):
         self.cfg.theme = self.theme_combo.currentData()
-        import config as _cfg; _cfg.save(self.cfg)
+        from reku import config as _cfg; _cfg.save(self.cfg)
         self.apply_theme()
 
     def _autostart_toggled(self, on):
         try:
-            import autostart
+            from reku import autostart
             autostart.set_enabled(bool(on))
         except Exception as e:
             print(f"[autostart] {e}", file=sys.stderr)
@@ -410,6 +424,7 @@ class MainWindow(QWidget):
         self.rec_btn.setEnabled(not busy)
         if state == "idle":
             self._update_hint()
+            self._update_runtime_label()
         elif state == "error":
             err = getattr(self.engine, "_last_error", None) if self.engine else None
             self.hint.setText(err or "Не удалось загрузить модель — проверьте устройство/сеть")
@@ -449,13 +464,13 @@ class MainWindow(QWidget):
 
     def _lang_changed(self):
         self.cfg.language = self.lang_combo.currentData()
-        import config as _cfg; _cfg.save(self.cfg)
+        from reku import config as _cfg; _cfg.save(self.cfg)
         if self.engine:
             self.engine.apply_config()
         self._update_hint()
 
     def _apply_settings(self):
-        import config as _cfg
+        from reku import config as _cfg
         c = self.cfg
         old = (c.model, c.device, c.compute_type)
         c.model = self.model_combo.currentText()
@@ -485,7 +500,7 @@ class MainWindow(QWidget):
         в config.json и поднять прежний рабочий бэкенд. Иначе нерабочий выбор
         (нет такого устройства / модель не поднялась) застревает в конфиге,
         и каждый следующий запуск приложения падает так же."""
-        import config as _cfg
+        from reku import config as _cfg
         emit = self.bridge.stateChanged.emit if self.bridge else self.set_state
         try:
             if not self.engine.reload_model():   # False = движок занят записью
@@ -537,17 +552,17 @@ def make_icon(rgb):
 
 
 def _run_selftest():
-    """Headless-самопроверка собранного .exe (WHISPER_PTT_SELFTEST=1).
+    """Headless-самопроверка собранного .exe (REKU_SELFTEST=1).
     UI не поднимаем: грузим модель, делаем короткую транскрипцию тишины,
-    пишем результат в %APPDATA%/whisper_ptt/selftest.json и выходим.
+    пишем результат в %APPDATA%/Reku/selftest.json и выходим.
     Главное — убедиться, что ct2 ВИДИТ CUDA (а не молча ушёл на CPU из-за
     непойманной DLL). test_frozen_smoke.py читает этот json."""
     import json
     import numpy as np
-    import config
-    import cuda_setup
-    import backends
-    from dictate import DictationApp
+    from reku import config
+    from reku import cuda_setup
+    from reku import backends
+    from reku.dictate import DictationApp
 
     result = {"cuda_device_count": 0, "device": None, "transcribe_ok": False,
               "added_dll_dirs": list(getattr(cuda_setup, "_ADDED", [])), "error": None}
@@ -578,13 +593,34 @@ def _run_selftest():
 
 def main():
     import threading
-    import config
-    from dictate import DictationApp
+    from reku import config
+    from reku.dictate import DictationApp
 
-    if os.environ.get("WHISPER_PTT_SELFTEST") == "1":
+    # Оставшийся от чужих экспериментов офлайн-флаг HF (в env сеанса или даже
+    # в реестре пользователя) ломает первое скачивание модели: «Cannot find an
+    # appropriate cached snapshot folder…». huggingface_hub считает офлайном
+    # ЛЮБУЮ из двух переменных (constants.py: HF_HUB_OFFLINE or
+    # TRANSFORMERS_OFFLINE) — снимаем обе ДО первого его импорта (значение
+    # фиксируется при импорте). Приложение само управляет своими моделями
+    # (маркер .download_complete в model_store) и в сеть ходит только когда
+    # модели реально нет — офлайн-флаг ему лишь вредит.
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
+    if os.environ.get("REKU_SELFTEST") == "1":
         sys.exit(_run_selftest())
 
+    # Windows: свой AppUserModelID, иначе панель задач считает окно «Python»
+    # (иконка pythonw вместо нашей) и не связывает его с ярлыком Reku
+    if sys.platform == "win32":
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Reku")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    app.setWindowIcon(make_icon(T.STATE_RGB["idle"]))   # окно/панель задач: наш микрофон
     app.setStyle("Fusion")                 # стабильная отрисовка QSS+палитры на всех
                                            # платформах: нативный Win-стиль игнорирует
                                            # часть стилей (тёмная всплывашка, бледная кнопка)
@@ -619,7 +655,7 @@ def main():
 
     # системный трей
     tray = QSystemTrayIcon(make_icon(T.STATE_RGB["loading"]), app)
-    tray.setToolTip("whisper_ptt — загрузка…")
+    tray.setToolTip(f"{APP_NAME} — загрузка…")
     menu = QMenu()
     menu.addAction("Показать").triggered.connect(win.show_normal)
     menu.addSeparator()
@@ -640,7 +676,7 @@ def main():
     def on_tray_state(s):
         rgb = T.STATE_RGB.get(s, T.RGB["accent"])
         tray.setIcon(make_icon(rgb))
-        tray.setToolTip(f"whisper_ptt — {T.STATE_TEXT.get(s, s)}")
+        tray.setToolTip(f"{APP_NAME} — {T.STATE_TEXT.get(s, s)}")
     bridge.stateChanged.connect(on_tray_state)
 
     # перерисовать иконку трея при смене темы + следовать системной теме на лету

@@ -7,7 +7,7 @@ __pycache__/
 # машинно-специфичный конфиг (создаётся при первом запуске из config.py)
 config.json
 
-# скачанные модели (model_store кладёт сюда; в .exe — в %APPDATA%\whisper_ptt\models)
+# скачанные модели (model_store кладёт сюда; в .exe — в %APPDATA%\Reku\models)
 models/
 
 # бенч (личные записи голоса) и кэш компиляции OpenVINO
@@ -24,9 +24,11 @@ Thumbs.db
 build/
 dist/
 installer/
-app.ico
+/app.ico
+!packaging/app.ico
 selftest.json
 check.png
+requirements.effective.txt
 
 # IDE
 .vscode/
