@@ -7,6 +7,11 @@ param(
     [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1: .NET по умолчанию может жить без TLS 1.2, а GitHub без
+# него рвёт соединение («Базовое соединение закрыто»). -bor сохраняет протоколы,
+# уже включённые системой (например TLS 1.3), а не затирает их.
+[Net.ServicePointManager]::SecurityProtocol = `
+    [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $AppName    = "Reku"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\$AppName"
 $RepoZip    = "https://github.com/Small-coder-AI/reku/archive/refs/heads/main.zip"
@@ -44,6 +49,18 @@ function Invoke-Uninstall {
     Write-Host "Удалено." -ForegroundColor Green
 }
 if ($Uninstall) { Invoke-Uninstall; return }
+
+# Валидируем -SourcePath сразу: при кривом аргументе (опечатка, мусор из-за
+# ошибки квотирования в cmd) скрипт иначе падал бы только на Copy-Item — уже
+# после установки Python. Ключ нужен лишь для локальной отладки.
+if ($SourcePath) {
+    $SourcePath = $SourcePath.Trim()
+    if (-not (Test-Path -LiteralPath (Join-Path $SourcePath "reku") -PathType Container)) {
+        throw ("-SourcePath `"$SourcePath`" не похож на чекаут Reku (нет каталога reku\). " +
+               "Этот ключ нужен только для локальной отладки; для обычной установки запусти скрипт без аргументов.")
+    }
+    $SourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
+}
 
 # ── 1. Железо ────────────────────────────────────────────────
 Write-Step "Определяю железо..."
