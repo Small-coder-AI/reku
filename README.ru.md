@@ -40,6 +40,13 @@ irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | iex
 Модель распознавания скачается при первом запуске. Обновление — та же команда.
 Удаление: скачать install.ps1 и запустить с ключом `-Uninstall`.
 
+Если `irm` падает с ошибкой «Базовое соединение закрыто» — в этой сессии
+Windows PowerShell выключен TLS 1.2. Включи его и повтори команду установки:
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+```
+
 ## Использование
 
 ```powershell
