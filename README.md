@@ -45,6 +45,13 @@ The script detects your hardware, installs only what is needed (~1–3 GB) and c
 The speech model is downloaded on first launch. To update, run the same command again.
 To uninstall, download install.ps1 and run it with `-Uninstall`.
 
+If `irm` fails with "The underlying connection was closed", your Windows PowerShell
+session has TLS 1.2 disabled — enable it and repeat the install command:
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+```
+
 ## Usage
 
 ```powershell
