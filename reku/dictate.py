@@ -121,11 +121,14 @@ class DictationApp:
             try:
                 self._download_and_load()
             except Exception as e:
+                # тихий откат на CPU — только в auto и только для GPU-бэкендов,
+                # у которых есть смысл в запасном пути (OpenVINO, whisper.cpp/AMD)
                 if not (self.cfg.device == "auto"
-                        and isinstance(self.backend, backends.OpenVINOBackend)):
+                        and isinstance(self.backend, (backends.OpenVINOBackend,
+                                                      backends.WhisperCppBackend))):
                     raise
-                print(f"[fallback] OpenVINO не поднялся ({e}); перехожу на CPU",
-                      file=sys.stderr, flush=True)
+                print(f"[fallback] {self.backend.name} не поднялся ({e}); "
+                      f"перехожу на CPU", file=sys.stderr, flush=True)
                 self.backend = backends.cpu_fallback_backend(self.cfg)
                 self._download_and_load()
             self._last_error = None

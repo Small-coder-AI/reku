@@ -33,6 +33,7 @@ MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "
 COMPUTES = ["auto", "float16", "int8_float16", "int8", "float32"]
 DEVICES = [("Авто", "auto"), ("GPU (CUDA)", "cuda"),
            ("Intel GPU (OpenVINO)", "igpu"), ("Intel NPU (эксперимент)", "npu"),
+           ("AMD GPU (Vulkan)", "amd"),
            ("CPU", "cpu"), ("API (облако)", "api")]
 HOTKEYS = [("Right Ctrl", "ctrl_r"), ("Left Ctrl", "ctrl_l"),
            ("Right Alt", "alt_r"), ("Caps Lock", "caps_lock"),
