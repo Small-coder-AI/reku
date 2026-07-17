@@ -127,8 +127,13 @@ $vpy = Join-Path $venv "Scripts\python.exe"
 Write-Step "Ставлю зависимости (профиль $hwProfile; это займёт несколько минут)..."
 $req = Get-Content (Join-Path $InstallDir "requirements.txt")
 if ($hwProfile -ne "cuda") { $req = $req | Where-Object { $_ -notmatch "^nvidia-" } }
-# amd-путь работает через whisper.cpp (отдельный exe, качается ниже) — openvino не нужен
-if ($hwProfile -in @("cpu", "amd")) { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
+# amd-путь работает через whisper.cpp (отдельный exe, качается ниже) — openvino не нужен.
+# ИСКЛЮЧЕНИЕ: если рядом с Radeon есть Intel iGPU, openvino оставляем запасным путём —
+# при нерабочем Vulkan (старый/битый драйвер) рантайм-цепочка auto тогда возьмёт igpu,
+# а не провалится на CPU (замечание ревью PR #12).
+$dropOpenvino = ($hwProfile -eq "cpu") -or
+                ($hwProfile -eq "amd" -and $gpus -notmatch "Intel.*(Arc|Iris|Graphics)")
+if ($dropOpenvino) { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
 $reqFile = Join-Path $InstallDir "requirements.effective.txt"
 $req | Set-Content $reqFile -Encoding UTF8
 & $vpy -m pip install --upgrade pip --quiet
