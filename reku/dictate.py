@@ -31,6 +31,23 @@ from reku import postprocess
 # строго после cuda_setup). DictationApp работает через self.backend.
 
 
+def mic_available() -> bool:
+    """Есть ли в системе устройство записи. PortAudio снимает список устройств ОДИН
+    раз при инициализации — микрофон, подключённый после старта приложения, без
+    переинициализации невидим (запись падала бы с невнятным PaErrorCode -9999).
+    Поэтому перед проверкой пересоздаём PortAudio. Дёргать только когда запись
+    не идёт: _terminate() убил бы активный стрим."""
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception:
+        pass
+    try:
+        return any(d["max_input_channels"] > 0 for d in sd.query_devices())
+    except Exception:
+        return False
+
+
 def parse_hotkey(name: str):
     """Имя из конфига -> объект pynput. 'ctrl_r' -> Key.ctrl_r; 'a' -> KeyCode('a')."""
     name = (name or "").strip()
@@ -134,7 +151,25 @@ class DictationApp:
         self._set_state("idle")
 
     # ── запись ───────────────────────────────────────────────
+    def _open_stream(self, cb):
+        """Открыть и запустить InputStream. Если .start() упал — закрыть уже
+        созданный стрим (иначе течёт ресурс PortAudio) и пробросить исключение."""
+        s = sd.InputStream(samplerate=self.cfg.sample_rate, channels=1,
+                           dtype="float32", callback=cb)
+        try:
+            s.start()
+        except Exception:
+            try:
+                s.close()
+            except Exception:
+                pass
+            raise
+        return s
+
     def start_rec(self):
+        if self.backend is None:      # модель не загрузилась — писать нечем;
+            self._set_state("error")  # _last_error уже хранит причину сбоя загрузки
+            return
         with self._lock:
             if self._recording or self._transcribing:
                 return
@@ -150,21 +185,25 @@ class DictationApp:
         # старт стрима может упасть (занятое/отсутствующее устройство, PortAudio):
         # откатываем флаг, иначе _recording залипнет True и запись больше не запустится
         try:
-            self._stream = sd.InputStream(samplerate=self.cfg.sample_rate, channels=1,
-                                          dtype="float32", callback=cb)
-            self._stream.start()
+            self._stream = self._open_stream(cb)
         except Exception as e:
-            self._recording = False
-            if self._stream is not None:        # стрим мог создаться, но .start() упал —
-                try:                            # закрываем, иначе течёт ресурс PortAudio
-                    self._stream.close()
-                except Exception:
-                    pass
             self._stream = None
-            self._last_error = str(e)
-            print(f"[start_rec] не смог открыть микрофон: {e}", file=sys.stderr)
-            self._set_state("error")
-            return
+            # mic_available() переинициализирует PortAudio: микрофон, подключённый
+            # после старта приложения, только так и становится видим — если он
+            # появился, вторая попытка открывает стрим без участия пользователя
+            mic_ok = mic_available()
+            if mic_ok:
+                try:
+                    self._stream = self._open_stream(cb)
+                except Exception as e2:
+                    e = e2
+            if self._stream is None:
+                self._recording = False
+                self._last_error = (str(e) if mic_ok else
+                                    "Микрофон не найден — подключи и попробуй ещё раз")
+                print(f"[start_rec] не смог открыть микрофон: {e}", file=sys.stderr)
+                self._set_state("error")
+                return
         self._set_state("recording")
 
     def stop_and_transcribe(self):
@@ -278,6 +317,15 @@ class DictationApp:
 
     def start(self):
         """Грузит модель (если ещё нет) и запускает слушатель клавиш. Не блокирует."""
+        # проверяем микрофон сразу, не дожидаясь загрузки/скачивания модели (минуты):
+        # раньше его отсутствие всплывало только при попытке записи невнятным
+        # «Unanticipated host error [PaErrorCode -9999]»
+        _mic_warn = "Микрофон не найден — подключи микрофон и нажми запись"
+        mic_ok = mic_available()
+        if not mic_ok:
+            self._last_error = _mic_warn
+            print("[start] микрофон не найден", file=sys.stderr, flush=True)
+            self._set_state("error")
         if self.backend is None:
             try:
                 self.load_model()
@@ -290,6 +338,11 @@ class DictationApp:
         self._listener = keyboard.Listener(on_press=self._on_press,
                                             on_release=self._on_release)
         self._listener.start()
+        if not mic_ok and not mic_available():
+            # статусы загрузки модели успели перекрыть раннее предупреждение —
+            # возвращаем его, если микрофон так и не появился
+            self._last_error = _mic_warn
+            self._set_state("error")
 
     def run(self):
         """Консольный запуск: стартует и блокируется до выхода."""

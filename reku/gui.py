@@ -420,7 +420,9 @@ class MainWindow(QWidget):
         self.rec_btn.setText("■ Стоп" if rec else "● Запись")
         self.rec_btn.setProperty("recording", "true" if rec else "false")
         self.rec_btn.style().unpolish(self.rec_btn); self.rec_btn.style().polish(self.rec_btn)
-        busy = state not in ("idle", "recording")   # loading/downloading/transcribing/error
+        # error НЕ блокирует кнопку: после «Микрофон не найден» пользователь должен
+        # мочь подключить микрофон и повторить запись без перезапуска приложения
+        busy = state not in ("idle", "recording", "error")   # loading/downloading/transcribing
         self.rec_btn.setEnabled(not busy)
         if state == "idle":
             self._update_hint()
@@ -459,7 +461,7 @@ class MainWindow(QWidget):
         import threading
         if self._state == "recording":
             threading.Thread(target=self.engine.stop_and_transcribe, daemon=True).start()
-        elif self._state == "idle":
+        elif self._state in ("idle", "error"):   # error: повторная попытка (микрофон могли подключить)
             self.engine.start_rec()
 
     def _lang_changed(self):
