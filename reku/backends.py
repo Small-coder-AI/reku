@@ -1,9 +1,10 @@
 """Абстракция бэкенда инференса + авто-детект железа.
 
-Сейчас реализован один локальный бэкенд (CTranslate2/faster-whisper).
-OpenVINOBackend (Intel iGPU/NPU) и ApiBackend (OpenRouter/OpenAI/…) — заглушки,
-реализуются в Фазе 2. Все бэкенды возвращают из transcribe() одинаковый
-(segments, info), поэтому UI и постпроцессинг не зависят от источника.
+Три локальных движка: CTranslate2/faster-whisper (NVIDIA CUDA и CPU),
+OpenVINO GenAI (Intel iGPU/NPU) и whisper.cpp+Vulkan (AMD; подпроцесс
+whisper-server, механика в whisper_cpp.py). ApiBackend (OpenRouter/OpenAI/…) —
+заглушка. Все бэкенды возвращают из transcribe() одинаковый (segments, info),
+поэтому UI и постпроцессинг не зависят от источника.
 
 ВАЖНО про порядок импорта: faster_whisper грузится ЛЕНИВО внутри
 CTranslate2Backend.load(), и строго после cuda_setup (тот кладёт nvidia-DLL в PATH).
@@ -16,6 +17,21 @@ HEAVY_MODELS = {
     "distil-large-v2", "distil-large-v3", "distil-large-v3.5",
 }
 CPU_FALLBACK_MODEL = "small"
+
+# Готовые ggml-модели whisper.cpp на HF (репо ggerganov/whisper.cpp; имена файлов
+# проверены по HF API 2026-07-17). Имя модели из конфига -> одиночный файл.
+# Квант q5: large-v3 ~1.1 ГБ — влезает в 8 ГБ VRAM (RX 6600 XT тестера) с запасом;
+# для tiny/base/small на HF лежит q5_1, а не q5_0 — это не опечатка.
+WCPP_MODEL_MAP = {
+    "large-v3": "ggml-large-v3-q5_0.bin",
+    "large-v3-turbo": "ggml-large-v3-turbo-q5_0.bin",
+    "turbo": "ggml-large-v3-turbo-q5_0.bin",
+    "large-v2": "ggml-large-v2-q5_0.bin",
+    "medium": "ggml-medium-q5_0.bin",
+    "small": "ggml-small-q5_1.bin",
+    "base": "ggml-base-q5_1.bin",
+    "tiny": "ggml-tiny-q5_1.bin",
+}
 
 # Готовые int8-модели OpenVINO на HF (проверено по HF API 2026-07-04).
 # Имя модели из конфига -> репо для скачивания.
@@ -102,14 +118,41 @@ def _ov_gpu_available() -> bool:
         return False
 
 
+def _amd_gpu_available() -> bool:
+    """Есть ли AMD-GPU (Radeon) + Vulkan-рантайм для whisper.cpp. Любой сбой = нет.
+    Детект по активным видеоадаптерам (EnumDisplayDevicesW — мгновенно, без
+    подпроцессов); vulkan-1.dll кладёт в System32 драйвер GPU — без неё
+    whisper-server не запустится."""
+    import os
+    if os.name != "nt":
+        return False
+    try:
+        vk = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                          "System32", "vulkan-1.dll")
+        if not os.path.isfile(vk):
+            return False
+        from reku import whisper_cpp
+        names = " ".join(whisper_cpp.display_adapter_names()).lower()
+        return "amd" in names or "radeon" in names
+    except Exception:
+        return False
+
+
 def resolve_runtime(device, compute_type, model, *, cuda_available,
-                    ov_gpu_available=False):
-    """Чистая функция: ('auto'|'cuda'|'cpu'|'igpu'|'npu', compute, model) ->
-    конкретные значения. Авто-цепочка: cuda -> igpu -> cpu. Понижение модели —
-    ТОЛЬКО в auto: на cpu тяжёлые -> small, на igpu — по карте ворот бенча."""
+                    ov_gpu_available=False, amd_available=False):
+    """Чистая функция: ('auto'|'cuda'|'cpu'|'igpu'|'npu'|'amd', compute, model) ->
+    конкретные значения. Авто-цепочка: cuda -> amd -> igpu -> cpu. AMD раньше
+    igpu сознательно: дискретный Radeon сильно быстрее десктопных Intel-iGPU
+    (частая связка Intel-CPU + Radeon-dGPU), а обратная связка Arc-dGPU +
+    Radeon-iGPU практически не встречается. Понижение модели — ТОЛЬКО в auto:
+    на cpu тяжёлые -> small, на igpu — по карте ворот бенча; на amd не понижаем
+    (large-v3-q5_0 ~1.1 ГБ влезает в типичные 8 ГБ VRAM). compute_type на amd
+    не действует — квантизация зашита в файл модели."""
     auto = (device == "auto")
     if auto:
-        dev = "cuda" if cuda_available else ("igpu" if ov_gpu_available else "cpu")
+        dev = ("cuda" if cuda_available else
+               "amd" if amd_available else
+               "igpu" if ov_gpu_available else "cpu")
     else:
         dev = device
 
@@ -259,6 +302,114 @@ class OpenVINOBackend(Backend):
         return segments, make_ov_info(cfg.language, duration)
 
 
+class WhisperCppBackend(Backend):
+    """AMD-GPU (и любой другой Vulkan-GPU) через whisper.cpp: наш CI-билд
+    whisper-server крутится подпроцессом на 127.0.0.1 и держит модель в VRAM
+    между диктовками; модели — одиночные ggml-файлы с HF (WCPP_MODEL_MAP).
+    Вся механика (движок/процесс/HTTP) — в whisper_cpp.py.
+
+    Ограничено by design (не «чинить» симметрию с CUDA-путём):
+      - hotwords и no_repeat_ngram_size движок не принимает (аналогов нет);
+      - condition_on_previous_text НЕ настраивается: сервер v1.9.1 всегда
+        работает в режиме no_context=true (наш дефолт False и есть);
+      - language_probability считается ТОЛЬКО при включённом фильтре
+        min_language_probability: это доп. проход детекции языка (лишняя
+        латентность на каждую фразу), без фильтра он не нужен.
+    """
+    name = "whispercpp"
+
+    def __init__(self, model):
+        self.model_name = model
+        self._server = None
+        self._vk_devices = None
+
+    @property
+    def device_label(self) -> str:
+        # 0 найденных Vulkan-устройств = ggml тихо считает на CPU — показываем
+        # честно, а не маскируем под GPU (урок CUDA-пути с DLL)
+        if self._vk_devices == 0:
+            return "CPU (Vulkan не найден)"
+        return "GPU (Vulkan)"
+
+    @property
+    def model_id(self):
+        return WCPP_MODEL_MAP.get(self.model_name)
+
+    @property
+    def model_kind(self) -> str:
+        return "ggml"
+
+    def load(self):
+        import os
+        import sys
+        from reku import whisper_cpp, model_store, config
+        rid = self.model_id
+        if rid is None:
+            raise ValueError(
+                f"модель {self.model_name!r} недоступна для whisper.cpp (AMD); "
+                f"выбери одну из: {', '.join(sorted(set(WCPP_MODEL_MAP)))}")
+        exe = whisper_cpp.ensure_engine(
+            on_progress=lambda n: print(f"Скачиваю движок {n} (~45 МБ, один раз)…",
+                                        flush=True))
+        self._server = whisper_cpp.ServerProcess(
+            exe, model_store.model_path(rid),
+            log_path=os.path.join(config.data_dir(), "whisper-server.log"))
+        self._server.start()
+        self._vk_devices = self._server.vulkan_devices()
+        if self._vk_devices == 0:
+            print("[whispercpp] ggml не нашёл Vulkan-устройств — движок работает "
+                  "на CPU (проверь драйвер видеокарты)", file=sys.stderr, flush=True)
+        # Прогрев: самый первый инференс компилирует Vulkan-пайплайны — на свежем
+        # драйверном кэше шейдеров это ДЕСЯТКИ секунд (замер на RTX 3050: 20 с,
+        # дальше ~1 с). Платим здесь, в фазе loading, а не на первой диктовке.
+        # beam_size как в дефолтном конфиге: greedy-прогрев не компилирует
+        # пайплайны beam-декода, и первая фраза всё равно платила бы ~14 с.
+        import numpy as np
+        self._server.inference(
+            whisper_cpp.encode_wav(np.zeros(1600, dtype=np.float32)),
+            {"response_format": "json", "beam_size": 5})
+
+    def transcribe(self, audio, cfg):
+        from reku import whisper_cpp
+        duration = len(audio) / 16000.0
+        want_prob = bool(cfg.min_language_probability)
+        if cfg.vad_filter:
+            audio = apply_vad(audio)
+            if audio is None:
+                return [], whisper_cpp.make_wcpp_info(cfg.language, duration)
+        fields = {
+            "response_format": "verbose_json",
+            "language": cfg.language or "auto",
+            "beam_size": cfg.beam_size,
+            # подавление не-речевых токенов (♪ и т.п.) — ближе к дефолту
+            # faster-whisper (suppress_tokens=-1), меньше мусора на шуме
+            "suppress_nst": "true",
+        }
+        if cfg.initial_prompt:
+            fields["prompt"] = cfg.initial_prompt
+        if not want_prob:
+            # детекция языка — лишний проход энкодера, нужна только фильтру
+            fields["no_language_probabilities"] = "true"
+        resp = self._server.inference(whisper_cpp.encode_wav(audio), fields)
+        segments = whisper_cpp.segments_from_response(resp)
+        prob = resp.get("detected_language_probability") if want_prob else None
+        lang = (resp.get("detected_language") or cfg.language) if want_prob else cfg.language
+        return segments, whisper_cpp.make_wcpp_info(lang, duration, prob)
+
+    def close(self):
+        s, self._server = self._server, None
+        if s is not None:
+            s.stop()
+
+    def __del__(self):
+        # reload_model просто бросает старый бэкенд — сервер должен умереть с ним;
+        # исключения глотаем: __del__ на shutdown интерпретатора кидать не должен
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
 class ApiBackend(Backend):
     """Облачный провайдер (OpenRouter/OpenAI/…). Заглушка — реализация в Фазе 2."""
     name = "api"
@@ -285,16 +436,22 @@ def cpu_fallback_backend(cfg):
     return CTranslate2Backend(model=mdl, device="cpu", compute_type="int8")
 
 
-def select_backend(cfg, *, cuda_probe=None, ov_probe=None):
+def select_backend(cfg, *, cuda_probe=None, ov_probe=None, amd_probe=None):
     """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен).
-    Пробы зовутся только в auto-режиме, ov-проба — только если CUDA нет."""
+    Пробы зовутся только в auto-режиме и лениво: amd — только если CUDA нет,
+    ov — только если нет ни CUDA, ни AMD (порядок цепочки см. resolve_runtime)."""
     if cfg.device == "api":
         return ApiBackend(cfg)
     cuda = (cuda_probe or _cuda_available)() if cfg.device == "auto" else False
+    amd = ((amd_probe or _amd_gpu_available)()
+           if (cfg.device == "auto" and not cuda) else False)
     ov = ((ov_probe or _ov_gpu_available)()
-          if (cfg.device == "auto" and not cuda) else False)
+          if (cfg.device == "auto" and not cuda and not amd) else False)
     dev, comp, mdl = resolve_runtime(cfg.device, cfg.compute_type, cfg.model,
-                                     cuda_available=cuda, ov_gpu_available=ov)
+                                     cuda_available=cuda, ov_gpu_available=ov,
+                                     amd_available=amd)
+    if dev == "amd":
+        return WhisperCppBackend(model=mdl)
     if dev in ("igpu", "npu"):
         return OpenVINOBackend(model=mdl, device=dev)
     return CTranslate2Backend(model=mdl, device=dev, compute_type=comp)

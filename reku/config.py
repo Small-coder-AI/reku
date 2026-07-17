@@ -100,7 +100,7 @@ CONFIG_PATH = os.path.join(data_dir(), "config.json")
 class Config:
     # ── модель ───────────────────────────────────────────────
     model: str = "large-v3"          # large-v3 / medium / small / ... или путь
-    device: str = "auto"             # auto / cuda / cpu / igpu / npu / api
+    device: str = "auto"             # auto / cuda / cpu / igpu / npu / amd / api
     compute_type: str = "auto"       # auto / float16 / int8_float16 / int8 / float32
 
     # ── API-бэкенд (зарезервировано, реализация в Фазе 2) ────

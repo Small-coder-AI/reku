@@ -43,22 +43,33 @@ def _dir_complete(d: str) -> bool:
 
 
 def is_cached(model: str) -> bool:
-    """Скачана ли модель ПОЛНОСТЬЮ: полный набор CT2-файлов либо маркер OV.
-    Для OV маркер надёжнее перечня файлов — состав репо может меняться."""
+    """Скачана ли модель ПОЛНОСТЬЮ: полный набор CT2-файлов, маркер OV либо
+    одиночный ggml-файл (whisper.cpp). Для OV маркер надёжнее перечня файлов —
+    состав репо может меняться. Для ggml сам файл появляется атомарно в конце
+    (hf_hub_download держит недокачанное в .cache внутри local_dir)."""
     p = model_path(model)
-    return _dir_complete(p) or os.path.isfile(os.path.join(p, _OV_MARKER))
+    return (_dir_complete(p) or os.path.isfile(os.path.join(p, _OV_MARKER))
+            or os.path.isfile(p))
 
 
 def ensure_downloaded(model: str, kind: str = "ct2", on_progress=None) -> str:
     """Гарантирует наличие модели локально. kind: 'ct2' (faster-whisper, атомарная
-    докачка через .tmp) или 'ov' (репо OpenVINO с HF; snapshot_download сам
-    возобновляем, маркер пишем в конце). on_progress(model) зовётся один раз
+    докачка через .tmp), 'ov' (репо OpenVINO с HF; snapshot_download сам
+    возобновляем, маркер пишем в конце) или 'ggml' (одиночный файл whisper.cpp
+    из репо ggerganov/whisper.cpp). on_progress(model) зовётся один раз
     перед началом скачивания (для UI)."""
     p = model_path(model)
     if is_cached(model):
         return p
     if on_progress:
         on_progress(model)
+    if kind == "ggml":
+        # model здесь — имя файла в репо, напр. "ggml-large-v3-q5_0.bin";
+        # докачка возобновляемая, готовый файл появляется в models/ атомарно
+        from huggingface_hub import hf_hub_download
+        hf_hub_download("ggerganov/whisper.cpp", filename=model,
+                        local_dir=model_cache_dir())
+        return p
     if kind == "ov":
         from huggingface_hub import snapshot_download
         snapshot_download(model, local_dir=p)

@@ -52,9 +52,10 @@ except NotImplementedError:
     ok &= check("ApiBackend.load кидает NotImplementedError", True)
 
 # select_backend: локальный путь -> CTranslate2Backend с разрешённым устройством
-# (ov-проба тоже мокается: на машине с Intel GPU настоящая вернула бы True)
+# (ov/amd-пробы тоже мокаются: на машине с Intel/AMD GPU настоящие вернули бы True)
 cfg_loc = S(device="auto", compute_type="auto", model="large-v3")
-b2 = select_backend(cfg_loc, cuda_probe=lambda: False, ov_probe=lambda: False)
+b2 = select_backend(cfg_loc, cuda_probe=lambda: False, ov_probe=lambda: False,
+                    amd_probe=lambda: False)
 ok &= check("auto+no-cuda -> CTranslate2Backend/cpu",
             isinstance(b2, CTranslate2Backend) and b2.device == "cpu"
             and b2.model_id == "small")
@@ -211,7 +212,8 @@ ok &= check("явный npu",
 
 # select_backend: no-cuda + ov -> OpenVINOBackend igpu
 _b_ov = select_backend(S(device="auto", compute_type="auto", model="base"),
-                       cuda_probe=lambda: False, ov_probe=lambda: True)
+                       cuda_probe=lambda: False, ov_probe=lambda: True,
+                       amd_probe=lambda: False)
 ok &= check("select: auto -> OpenVINOBackend/igpu",
             isinstance(_b_ov, OpenVINOBackend) and _b_ov.device == "igpu"
             and _b_ov.model_name == "base")
@@ -224,12 +226,13 @@ _b_igpu = select_backend(S(device="igpu", compute_type="auto", model="large-v3")
 ok &= check("select: явный igpu без проб",
             isinstance(_b_igpu, OpenVINOBackend) and _probe_calls == [])
 
-# select_backend: cuda есть -> ov-проба не зовётся (ленивость)
+# select_backend: cuda есть -> ov/amd-пробы не зовутся (ленивость)
 _ov_calls = []
 _b_cuda = select_backend(S(device="auto", compute_type="auto", model="small"),
                          cuda_probe=lambda: True,
-                         ov_probe=lambda: _ov_calls.append(1) or True)
-ok &= check("select: cuda найден -> ov-проба не звана",
+                         ov_probe=lambda: _ov_calls.append("ov") or True,
+                         amd_probe=lambda: _ov_calls.append("amd") or True)
+ok &= check("select: cuda найден -> ov/amd-пробы не званы",
             isinstance(_b_cuda, CTranslate2Backend) and _ov_calls == [])
 
 # ── cpu_fallback_backend: запасной CPU-бэкенд для auto при сбое OV ──
