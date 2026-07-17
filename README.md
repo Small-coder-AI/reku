@@ -4,8 +4,9 @@
 
 Local push-to-talk dictation for Windows: hold a key — speak — the text appears at your cursor.
 Fully offline: audio never leaves your machine. Russian and English out of the box (plus the 90+ languages Whisper knows).
-Two engines under one hood: NVIDIA CUDA (faster-whisper) and Intel iGPU/NPU (OpenVINO) —
-the app picks whatever suits your hardware best and falls back to a lighter model on weak machines.
+Three engines under one hood: NVIDIA CUDA (faster-whisper), Intel iGPU/NPU (OpenVINO)
+and AMD GPU (whisper.cpp + Vulkan) — the app picks whatever suits your hardware best
+and falls back to a lighter model on weak machines.
 
 <p align="center">
   <picture>
@@ -23,7 +24,7 @@ the app picks whatever suits your hardware best and falls back to a lighter mode
   models — large-v3 is either too slow or won't run at all. Reku executes the full
   large-v3 (int8) on the Intel iGPU/NPU through OpenVINO: a plain laptop without a
   gaming GPU dictates with flagship-model accuracy. With an NVIDIA card it runs CUDA
-  at full speed instead.
+  at full speed, and on AMD Radeon it uses whisper.cpp over Vulkan.
 - **Actually offline.** No cloud, no account, no subscription — audio never leaves
   the machine.
 - **Seriously tuned for Russian.** Cures the classic Whisper sores: Latin letters
@@ -31,7 +32,7 @@ the app picks whatever suits your hardware best and falls back to a lighter mode
   other languages work as well.
 - **One command to install, the same command to update.** The script detects your
   hardware, installs Python by itself if missing and picks the right dependency
-  profile (CUDA / Intel / CPU).
+  profile (CUDA / Intel / AMD / CPU).
 
 ## Install
 
@@ -59,9 +60,9 @@ session has TLS 1.2 disabled — enable it and repeat the install command:
 Download `Reku-setup.exe` from the [releases page](https://github.com/Small-coder-AI/reku/releases)
 and run it — a per-user install, no admin rights. Windows SmartScreen may warn
 "Windows protected your PC" — click **"More info" → "Run anyway"** (the app is not signed
-with a paid certificate, but the source is open). The installer bundles **both** engines
-(CUDA + OpenVINO), so it is much heavier than the script install above — the script
-remains the recommended path.
+with a paid certificate, but the source is open). The installer bundles the CUDA and
+OpenVINO engines (the AMD/Vulkan engine is a small on-demand download), so it is much
+heavier than the script install above — the script remains the recommended path.
 
 ### Alternative: via uv (for developers)
 
@@ -70,8 +71,11 @@ With [uv](https://docs.astral.sh/uv/) installed, pick the extra matching your ha
 ```powershell
 uv tool install "reku[cuda] @ git+https://github.com/Small-coder-AI/reku"    # NVIDIA GPU
 uv tool install "reku[intel] @ git+https://github.com/Small-coder-AI/reku"   # Intel iGPU/NPU
-uv tool install "reku @ git+https://github.com/Small-coder-AI/reku"          # CPU only
+uv tool install "reku @ git+https://github.com/Small-coder-AI/reku"          # CPU or AMD GPU
 ```
+
+The AMD path needs no extra Python packages: the whisper.cpp (Vulkan) engine is
+downloaded automatically on first launch (~45 MB, sha256-verified).
 
 Then run `reku` in a **new** terminal window. Settings and models live in `%APPDATA%\Reku`.
 Update later with `uv tool upgrade reku`.
@@ -101,7 +105,7 @@ Created on first launch. The essentials:
 | option | default | meaning |
 |---|---|---|
 | `model` / `compute_type` | `large-v3` / `auto` | which model to load; `large-v3-turbo` is nearly as accurate and several times faster |
-| `device` | `auto` | `auto` → CUDA → Intel GPU (OpenVINO) → CPU; explicit: `cuda`/`igpu`/`npu`/`cpu` |
+| `device` | `auto` | `auto` → CUDA → AMD (Vulkan) → Intel GPU (OpenVINO) → CPU; explicit: `cuda`/`igpu`/`npu`/`amd`/`cpu` |
 | `hotkey` | `ctrl_r` | pynput key name (`ctrl_r`, `f9`, …) or a single character |
 | `mode` | `ptt` | `ptt` — hold to talk; `toggle` — press to start/stop |
 | `theme` | `system` | `system` (follows Windows) / `dark` / `light` |
@@ -183,6 +187,25 @@ the app falls back to CPU + small. On machines without NVIDIA you may skip the
 phrases: `python scripts/bench_backends.py record`, then `run` (report in
 `bench_audio/bench_results.md`).
 
+### AMD GPU (whisper.cpp + Vulkan)
+
+On machines with an AMD Radeon, `auto` picks the whisper.cpp engine over Vulkan —
+the only mature GPU path on AMD/Windows (CTranslate2 has no ROCm build for Windows).
+The engine (`whisper-server.exe`) is **our own CI build** from the
+`engine-whisper-cpp-*-vulkan` release of this repo (official whisper.cpp releases ship
+no Windows Vulkan binaries): it is downloaded on first use (~45 MB, sha256 pinned in
+`reku/whisper_cpp.py`) into `%APPDATA%\Reku\engines` and runs as a local subprocess on
+127.0.0.1; models are single-file ggml q5 quants from HF (`WCPP_MODEL_MAP` in
+backends.py, large-v3 ≈ 1.1 GB — fits 8 GB VRAM easily). The very first inference
+compiles Vulkan shaders (tens of seconds, one-off per machine — the driver caches them);
+the app warms this up during model load. VAD and the hallucination filters work;
+`min_language_probability` works too (an extra language-detection pass is requested only
+when the filter is enabled); `hotwords`, `no_repeat_ngram_size` and
+`condition_on_previous_text` are not supported by this engine. Server log for
+diagnostics: `%APPDATA%\Reku\whisper-server.log`; a local engine build can be pointed to
+via the `REKU_WHISPER_CPP_DIR` env var. The same Vulkan path runs on NVIDIA/Intel GPUs
+as well (handy for testing: `"device": "amd"` in config.json).
+
 ## Files
 
 - `reku/gui.py` — **desktop UI on PySide6** (window + tray). The main entry point.
@@ -192,7 +215,8 @@ phrases: `python scripts/bench_backends.py record`, then `run` (report in
 - `reku/postprocess.py` — hallucination filter (pure functions).
 - `reku/cuda_setup.py` — puts the nvidia DLLs on PATH (see "Why cuda_setup.py" above). **Imported first.**
 - `requirements.txt` (top-level pins) / `requirements.lock.txt` (full freeze).
-- `reku/backends.py` — backend selection and management (faster-whisper, OpenVINO).
+- `reku/backends.py` — backend selection and management (faster-whisper, OpenVINO, whisper.cpp).
+- `reku/whisper_cpp.py` — the AMD path machinery: engine download, whisper-server subprocess.
 - `reku/model_store.py` — model download and caching.
 - `tests/` — unit tests.
 - `scripts/` — utility scripts (make_ico.py, bench_backends.py).
