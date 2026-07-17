@@ -93,6 +93,15 @@ ok &= check("auto+amd: тяжёлая модель НЕ понижается (8 
 ok &= check("явный amd без проб",
             resolve_runtime("amd", "auto", "large-v3", cuda_available=False)[0]
             == "amd")
+# модель без ggml-кванта в auto НЕ роняет AMD-путь в CPU: подстановка large-v3
+ok &= check("auto+amd: distil-* подставляется large-v3 (GPU не теряется)",
+            resolve_runtime("auto", "auto", "distil-large-v3",
+                            cuda_available=False, amd_available=True)
+            == ("amd", "int8", "large-v3"))
+# явный amd подстановку НЕ делает — понятная ошибка в load() (решение пользователя)
+ok &= check("явный amd: модель не подменяется",
+            resolve_runtime("amd", "auto", "distil-large-v3",
+                            cuda_available=False)[2] == "distil-large-v3")
 
 # ── select_backend: маршрутизация и ленивость проб ────────────
 _cfg = S(device="auto", compute_type="auto", model="large-v3")

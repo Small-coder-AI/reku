@@ -388,6 +388,17 @@ class ServerProcess:
                 p.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 p.kill()
+        if p is not None:
+            # процесс мёртв — job пуст, его хэндл можно закрыть (иначе по одному
+            # ядерному хэндлу утекало бы на каждую перезагрузку модели)
+            job = getattr(p, "_reku_job", None)
+            if job:
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.CloseHandle(job)
+                except Exception:
+                    pass
+                p._reku_job = None
         if self._log_f not in (None, subprocess.DEVNULL):
             try:
                 self._log_f.close()

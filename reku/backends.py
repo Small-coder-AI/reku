@@ -165,6 +165,11 @@ def resolve_runtime(device, compute_type, model, *, cuda_available,
         mdl = CPU_FALLBACK_MODEL
     if auto and dev == "igpu":
         mdl = IGPU_AUTO_SUBSTITUTE.get(model, model)
+    if auto and dev == "amd" and model not in WCPP_MODEL_MAP:
+        # модель без готового ggml-кванта (large, large-v1, distil-*) не должна
+        # молча ронять AMD-путь в CPU-фолбэк через ValueError в load() —
+        # владелец Radeon потерял бы GPU целиком; подставляем дефолтную large-v3
+        mdl = "large-v3"
 
     return dev, comp, mdl
 
@@ -355,19 +360,25 @@ class WhisperCppBackend(Backend):
             exe, model_store.model_path(rid),
             log_path=os.path.join(config.data_dir(), "whisper-server.log"))
         self._server.start()
-        self._vk_devices = self._server.vulkan_devices()
-        if self._vk_devices == 0:
-            print("[whispercpp] ggml не нашёл Vulkan-устройств — движок работает "
-                  "на CPU (проверь драйвер видеокарты)", file=sys.stderr, flush=True)
-        # Прогрев: самый первый инференс компилирует Vulkan-пайплайны — на свежем
-        # драйверном кэше шейдеров это ДЕСЯТКИ секунд (замер на RTX 3050: 20 с,
-        # дальше ~1 с). Платим здесь, в фазе loading, а не на первой диктовке.
-        # beam_size как в дефолтном конфиге: greedy-прогрев не компилирует
-        # пайплайны beam-декода, и первая фраза всё равно платила бы ~14 с.
-        import numpy as np
-        self._server.inference(
-            whisper_cpp.encode_wav(np.zeros(1600, dtype=np.float32)),
-            {"response_format": "json", "beam_size": 5})
+        try:
+            self._vk_devices = self._server.vulkan_devices()
+            if self._vk_devices == 0:
+                print("[whispercpp] ggml не нашёл Vulkan-устройств — движок работает "
+                      "на CPU (проверь драйвер видеокарты)", file=sys.stderr, flush=True)
+            # Прогрев: самый первый инференс компилирует Vulkan-пайплайны — на свежем
+            # драйверном кэше шейдеров это ДЕСЯТКИ секунд (замер на RTX 3050: 20 с,
+            # дальше ~1 с). Платим здесь, в фазе loading, а не на первой диктовке.
+            # beam_size как в дефолтном конфиге: greedy-прогрев не компилирует
+            # пайплайны beam-декода, и первая фраза всё равно платила бы ~14 с.
+            import numpy as np
+            self._server.inference(
+                whisper_cpp.encode_wav(np.zeros(1600, dtype=np.float32)),
+                {"response_format": "json", "beam_size": 5})
+        except Exception:
+            # сервер уже запущен и держит ~1 ГБ VRAM: при сбое прогрева гасим его
+            # явно, а не полагаемся на __del__ (CPU-фолбэк в dictate бросит бэкенд)
+            self.close()
+            raise
 
     def transcribe(self, audio, cfg):
         from reku import whisper_cpp
@@ -475,6 +486,9 @@ def select_backend(cfg, *, cuda_probe=None, ov_probe=None, amd_probe=None):
                                      cuda_available=cuda, ov_gpu_available=ov,
                                      amd_available=amd)
     if dev == "amd":
+        if mdl != cfg.model:
+            print(f"[backends] у модели {cfg.model!r} нет ggml-кванта — "
+                  f"на AMD (Vulkan) беру {mdl!r}", flush=True)
         return WhisperCppBackend(model=mdl)
     if dev in ("igpu", "npu"):
         return OpenVINOBackend(model=mdl, device=dev)
