@@ -1,0 +1,104 @@
+# Сборка whisper.cpp (whisper-cli/whisper-server) с Vulkan-бэкендом для AMD-пути Reku.
+# Официальные релизы whisper.cpp НЕ содержат Windows-бинарников с Vulkan, а чужим
+# неподписанным сборкам доверять нельзя — собираем сами и кладём в наш GitHub Release
+# (тег engine-whisper-cpp-<версия>-vulkan; make_latest=false, чтобы не заслонять релизы
+# самого приложения). Запуск: вручную (workflow_dispatch); прогон на PR — только при
+# правке этого файла (публикации там нет, только артефакт).
+name: build-whisper-cpp
+
+on:
+  workflow_dispatch:
+    inputs:
+      whisper_ref:
+        description: "Тег/коммит ggml-org/whisper.cpp"
+        default: "v1.9.1"
+        required: true
+  pull_request:
+    paths: ['.github/workflows/build-whisper-cpp.yml']
+
+permissions:
+  contents: write
+
+env:
+  WHISPER_REF: ${{ inputs.whisper_ref || 'v1.9.1' }}
+  VULKAN_VERSION: "1.4.350.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ env.WHISPER_REF }}
+
+      # Vulkan SDK нужен только для СБОРКИ (glslc компилирует шейдеры в SPIR-V,
+      # заголовки/либы для линковки) — на машине пользователя SDK не нужен,
+      # рантайм vulkan-1.dll приносит драйвер видеокарты.
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          curl.exe -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" -L `
+            "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/VulkanSDK-$env:VULKAN_VERSION-Installer.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install | Out-Null
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
+
+      # BUILD_SHARED_LIBS=OFF: ggml/whisper статически внутри exe — меньше файлов
+      # для докачки install.ps1 и негде перепутать версии DLL.
+      - name: Configure and build
+        shell: pwsh
+        run: |
+          cmake -B build -DGGML_VULKAN=ON -DBUILD_SHARED_LIBS=OFF `
+            -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build --config Release --parallel
+          Get-ChildItem build\bin\Release
+
+      # Смоук на CPU (-ng): у раннера нет GPU, но сам exe, загрузка модели и декод
+      # обязаны работать. Модель tiny (~75 МБ) — только для проверки живости.
+      - name: Smoke test (CPU decode)
+        shell: pwsh
+        run: |
+          curl.exe -o "$env:RUNNER_TEMP\ggml-tiny.bin" -L `
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+          & build\bin\Release\whisper-cli.exe -m "$env:RUNNER_TEMP\ggml-tiny.bin" -f samples\jfk.wav -ng
+          if ($LASTEXITCODE -ne 0) { Write-Error "whisper-cli exit code $LASTEXITCODE"; exit 1 }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "whisper-cpp-vulkan"
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item build\bin\Release\whisper-cli.exe, build\bin\Release\whisper-server.exe $stage
+          Copy-Item LICENSE "$stage\LICENSE.whisper.cpp.txt"
+          $zip = "whisper-cpp-vulkan-$env:WHISPER_REF-win-x64.zip"
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash + "  " + $zip | Set-Content "$zip.sha256"
+          Get-Content "$zip.sha256"
+
+      # На PR публикации нет — только артефакт для глаз.
+      - name: Upload artifact (PR run)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-cpp-vulkan-win-x64
+          path: |
+            whisper-cpp-vulkan-*.zip
+            whisper-cpp-vulkan-*.zip.sha256
+
+      - name: Publish engine release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: engine-whisper-cpp-${{ env.WHISPER_REF }}-vulkan
+          name: "Движок whisper.cpp ${{ env.WHISPER_REF }} (Vulkan, win-x64)"
+          body: |
+            Служебный релиз: whisper-cli/whisper-server, собранные с Vulkan-бэкендом
+            для AMD-пути Reku (официальные релизы whisper.cpp не содержат Windows-Vulkan
+            бинарников). Собрано этим workflow из ggml-org/whisper.cpp@${{ env.WHISPER_REF }},
+            Vulkan SDK ${{ env.VULKAN_VERSION }}. Проверка целостности — файл .sha256.
+          make_latest: "false"
+          files: |
+            whisper-cpp-vulkan-*.zip
+            whisper-cpp-vulkan-*.zip.sha256
