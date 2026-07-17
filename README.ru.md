@@ -33,9 +33,11 @@
 Открой PowerShell и выполни:
 
 ```powershell
-irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | % TrimStart ([char]0xFEFF) | iex
 ```
 
+`% TrimStart ([char]0xFEFF)` снимает BOM: под Windows PowerShell 5.1 `irm` отдаёт скрипт
+с ведущим U+FEFF, и `iex` принимает первую строку-комментарий за команду «#».
 Скрипт сам определит железо, поставит только нужное (~1–3 ГБ) и сделает ярлыки.
 Модель распознавания скачается при первом запуске. Обновление — та же команда.
 Удаление: скачать install.ps1 и запустить с ключом `-Uninstall`.

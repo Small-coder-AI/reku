@@ -38,10 +38,12 @@ the app picks whatever suits your hardware best and falls back to a lighter mode
 Open PowerShell and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | % TrimStart ([char]0xFEFF) | iex
 ```
 
-The script detects your hardware, installs only what is needed (~1–3 GB) and creates shortcuts.
+`% TrimStart ([char]0xFEFF)` strips the UTF-8 BOM that Windows PowerShell 5.1 keeps at the
+front of the downloaded script — without it `iex` misreads the first comment line as a
+command. The script detects your hardware, installs only what is needed (~1–3 GB) and creates shortcuts.
 The speech model is downloaded on first launch. To update, run the same command again.
 To uninstall, download install.ps1 and run it with `-Uninstall`.
 

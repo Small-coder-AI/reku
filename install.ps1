@@ -1,5 +1,7 @@
 ﻿# install.ps1 — установка Reku одной командой.
-#   irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | % TrimStart ([char]0xFEFF) | iex
+#   (% TrimStart снимает BOM: под Windows PowerShell 5.1 irm отдаёт файл с ведущим
+#    U+FEFF, из-за чего iex принимает первую строку-комментарий за команду «#».)
 # Локальная отладка:  .\install.ps1 -SourcePath C:\path\to\reku
 # Удаление:           .\install.ps1 -Uninstall
 param(
