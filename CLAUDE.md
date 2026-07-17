@@ -14,8 +14,9 @@ Reku — локальная push-to-talk диктовка для Windows (PySide
 собирает CI на пуш тега `vX.Y.Z` и кладёт в GitHub Release (`.github/workflows/release.yml`);
 и `uv tool install "reku[cuda|intel] @ git+…"` (extras по железу в pyproject.toml).
 Версия живёт в ДВУХ местах — `pyproject.toml` и `reku/__init__.py` (CI сверяет обе с тегом);
-пины зависимостей — тоже в двух: `requirements.txt` (его фильтрует install.ps1) и
-`pyproject.toml` — менять синхронно.
+пины зависимостей — в ТРЁХ: `requirements.txt`/`requirements.lock.txt` (их использует
+install.ps1), `pyproject.toml` (прямые + `[tool.uv] constraint-dependencies` для
+транзитивных) и `uv.lock` (перегенерировать `uv lock`) — менять синхронно.
 
 ## Команды
 

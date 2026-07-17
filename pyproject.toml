@@ -1,6 +1,7 @@
 # Метаданные пакета и вход для `uv tool install` / `pip install`.
 # ВАЖНО: пины зависимостей дублируются в requirements.txt (его читает install.ps1,
-# фильтруя строки по профилю железа) — менять версии в ОБОИХ файлах синхронно.
+# фильтруя строки по профилю железа) — менять версии в ОБОИХ файлах синхронно
+# и перегенерировать uv.lock (`uv lock`); транзитивные пины — см. [tool.uv] ниже.
 [project]
 name = "reku"
 version = "0.2.0"
@@ -44,6 +45,17 @@ reku = "reku.gui:main"
 [dependency-groups]
 # pillow — только для scripts/make_ico.py (перегенерация иконки)
 dev = ["pyinstaller>=6", "Pillow==12.2.0"]
+
+[tool.uv]
+# Транзитивные зависимости, влияющие на рантайм, прижаты к проверенному срезу
+# requirements.lock.txt — иначе uv.lock/релизная сборка уезжали бы на более новые
+# версии, чем путь install.ps1 (менять синхронно с requirements.lock.txt).
+constraint-dependencies = [
+    "av==17.0.1",
+    "onnxruntime==1.26.0",
+    "huggingface-hub==1.17.0",
+    "tokenizers==0.23.1",
+]
 
 [build-system]
 requires = ["hatchling>=1.26"]
