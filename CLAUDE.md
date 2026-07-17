@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Что это
 
-Reku — локальная push-to-talk диктовка для Windows (PySide6: окно + трей). Два движка
-распознавания: faster-whisper/CTranslate2 (NVIDIA CUDA) и OpenVINO GenAI (Intel iGPU/NPU),
-автовыбор по железу с фолбэком на CPU. Репозиторий публичный: github.com/Small-coder-AI/reku.
+Reku — локальная push-to-talk диктовка для Windows (PySide6: окно + трей). Три движка
+распознавания: faster-whisper/CTranslate2 (NVIDIA CUDA), OpenVINO GenAI (Intel iGPU/NPU)
+и whisper.cpp+Vulkan (AMD; подпроцесс whisper-server), автовыбор по железу
+(auto-цепочка cuda → amd → igpu → cpu) с фолбэком на CPU.
+Репозиторий публичный: github.com/Small-coder-AI/reku.
 
 Дистрибуция: основной путь — `install.ps1` (скачивает main.zip, ставит Python + venv в
 `%LOCALAPPDATA%\Programs\Reku`; обновление = повторный запуск, код заменяется целиком,
@@ -58,6 +60,12 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
 - **OpenVINO-путь ограничен by design**: greedy-декод (beam_size игнорируется), `hotwords`
   и `min_language_probability` не действуют — движок их не принимает. Не «чинить» симметрию
   с CUDA-путём.
+- **AMD-путь (whisper.cpp) тоже ограничен by design**: `hotwords`, `no_repeat_ngram_size`
+  и `condition_on_previous_text` не действуют (сервер v1.9.1 всегда no_context).
+  Движок — НАШ CI-билд whisper-server (workflow `build-whisper-cpp.yml` → служебный релиз
+  `engine-whisper-cpp-*-vulkan`); пин версии и sha256 — константы в `reku/whisper_cpp.py`,
+  при обновлении движка менять тег/имя/sha256 разом. Первый инференс на машине компилирует
+  Vulkan-шейдеры (десятки секунд) — поэтому в `load()` есть прогрев, не удалять.
 - **`REKU_SELFTEST=1`** — хук в `gui.main()`: вместо UI выполняется короткая самопроверка,
   результат в `%APPDATA%\Reku\selftest.json` (на этом построен test_frozen_smoke.py).
 - GUI при старте снимает залипшие offline-флаги HuggingFace (`TRANSFORMERS_OFFLINE` и т.п.),

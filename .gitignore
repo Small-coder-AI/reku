@@ -10,6 +10,9 @@ config.json
 # скачанные модели (model_store кладёт сюда; в .exe — в %APPDATA%\Reku\models)
 models/
 
+# скачанный движок whisper.cpp (whisper_cpp.ensure_engine; в проде — %APPDATA%\Reku\engines)
+engines/
+
 # бенч (личные записи голоса) и кэш компиляции OpenVINO
 bench_audio/
 ov_cache/
