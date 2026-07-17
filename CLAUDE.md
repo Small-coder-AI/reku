@@ -10,7 +10,13 @@ Reku — локальная push-to-talk диктовка для Windows (PySide
 
 Дистрибуция: основной путь — `install.ps1` (скачивает main.zip, ставит Python + venv в
 `%LOCALAPPDATA%\Programs\Reku`; обновление = повторный запуск, код заменяется целиком,
-данные живут отдельно). Запасной путь — frozen exe (PyInstaller + Inno Setup).
+данные живут отдельно). Запасные пути: frozen exe (PyInstaller + Inno Setup) — его же
+собирает CI на пуш тега `vX.Y.Z` и кладёт в GitHub Release (`.github/workflows/release.yml`);
+и `uv tool install "reku[cuda|intel] @ git+…"` (extras по железу в pyproject.toml).
+Версия живёт в ДВУХ местах — `pyproject.toml` и `reku/__init__.py` (CI сверяет обе с тегом);
+пины зависимостей — в ТРЁХ: `requirements.txt`/`requirements.lock.txt` (их использует
+install.ps1), `pyproject.toml` (прямые + `[tool.uv] constraint-dependencies` для
+транзитивных) и `uv.lock` (перегенерировать `uv lock`) — менять синхронно.
 
 ## Команды
 

@@ -49,6 +49,28 @@ Windows PowerShell выключен TLS 1.2. Включи его и повтор
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 ```
 
+### Альтернатива: инсталлятор со страницы релизов
+
+Скачай `Reku-setup.exe` со [страницы релизов](https://github.com/Small-coder-AI/reku/releases)
+и запусти — установка per-user, без прав администратора. Windows SmartScreen может
+предупредить «Система Windows защитила ваш компьютер» — нажми **«Подробнее» → «Выполнить
+в любом случае»** (приложение не подписано платным сертификатом, но исходники открыты).
+Инсталлятор включает **оба** движка (CUDA + OpenVINO), поэтому он заметно тяжелее
+установки скриптом — скрипт остаётся рекомендуемым путём.
+
+### Альтернатива: через uv (для разработчиков)
+
+С установленным [uv](https://docs.astral.sh/uv/) выбери extra под своё железо:
+
+```powershell
+uv tool install "reku[cuda] @ git+https://github.com/Small-coder-AI/reku"    # NVIDIA GPU
+uv tool install "reku[intel] @ git+https://github.com/Small-coder-AI/reku"   # Intel iGPU/NPU
+uv tool install "reku @ git+https://github.com/Small-coder-AI/reku"          # только CPU
+```
+
+Дальше — команда `reku` в **новом** окне терминала. Настройки и модели живут в `%APPDATA%\Reku`.
+Обновление: `uv tool upgrade reku`.
+
 ## Использование
 
 ```powershell
@@ -117,6 +139,10 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
 
 **Инсталлятор** (Inno Setup, per-user — без админ-прав) ставит в `%LOCALAPPDATA%\Programs\Reku`, делает ярлык в Пуске (+ опц. рабочий стол),
 опц. автозапуск и деинсталлятор. Нужен Inno Setup: `winget install JRSoftware.InnoSetup`.
+
+**Релизы**: пуш тега `vX.Y.Z` запускает CI (`.github/workflows/release.yml`), который
+собирает тот же инсталлятор и прикладывает его к GitHub Release. Перед тегом подними
+`version` в `pyproject.toml` и `__version__` в `reku/__init__.py` — CI сверяет их с тегом.
 
 ## Как это работает
 
