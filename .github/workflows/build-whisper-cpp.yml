@@ -16,8 +16,9 @@ on:
   pull_request:
     paths: ['.github/workflows/build-whisper-cpp.yml']
 
+# write нужен только публикации — она вынесена в отдельный job со своими правами
 permissions:
-  contents: write
+  contents: read
 
 env:
   WHISPER_REF: ${{ inputs.whisper_ref || 'v1.9.1' }}
@@ -26,12 +27,24 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      safe_ref: ${{ steps.ref.outputs.safe_ref }}
     steps:
       - name: Checkout whisper.cpp
         uses: actions/checkout@v4
         with:
           repository: ggml-org/whisper.cpp
           ref: ${{ env.WHISPER_REF }}
+
+      # whisper_ref — свободный ввод: ref со слэшем (ветка feat/foo) сломал бы
+      # имя zip и тег релиза — вычищаем всё, кроме букв/цифр/точек/дефисов
+      - name: Compute safe ref for file/tag names
+        id: ref
+        shell: pwsh
+        run: |
+          $safe = $env:WHISPER_REF -replace '[^\w.\-]', '_'
+          "safe_ref=$safe" | Out-File $env:GITHUB_OUTPUT -Append
+          Add-Content $env:GITHUB_ENV "SAFE_REF=$safe"
 
       # Vulkan SDK нужен только для СБОРКИ (glslc компилирует шейдеры в SPIR-V,
       # заголовки/либы для линковки) — на машине пользователя SDK не нужен,
@@ -42,6 +55,7 @@ jobs:
           $exe = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
           curl.exe -fSL -o $exe `
             "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ($LASTEXITCODE -ne 0) { Write-Error "Vulkan SDK download failed ($LASTEXITCODE)"; exit 1 }
           # страж от «скачалась страница ошибки вместо инсталлятора» (реальный ~320 МБ)
           if ((Get-Item $exe).Length -lt 100MB) { Write-Error "installer too small: $((Get-Item $exe).Length) bytes"; exit 1 }
           & $exe --accept-licenses --default-answer --confirm-command install | Out-Null
@@ -63,8 +77,9 @@ jobs:
       - name: Smoke test (CPU decode)
         shell: pwsh
         run: |
-          curl.exe -o "$env:RUNNER_TEMP\ggml-tiny.bin" -L `
+          curl.exe -fSL -o "$env:RUNNER_TEMP\ggml-tiny.bin" `
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+          if ($LASTEXITCODE -ne 0) { Write-Error "model download failed ($LASTEXITCODE)"; exit 1 }
           & build\bin\Release\whisper-cli.exe -m "$env:RUNNER_TEMP\ggml-tiny.bin" -f samples\jfk.wav -ng
           if ($LASTEXITCODE -ne 0) { Write-Error "whisper-cli exit code $LASTEXITCODE"; exit 1 }
 
@@ -75,14 +90,12 @@ jobs:
           New-Item -ItemType Directory $stage | Out-Null
           Copy-Item build\bin\Release\whisper-cli.exe, build\bin\Release\whisper-server.exe $stage
           Copy-Item LICENSE "$stage\LICENSE.whisper.cpp.txt"
-          $zip = "whisper-cpp-vulkan-$env:WHISPER_REF-win-x64.zip"
+          $zip = "whisper-cpp-vulkan-$env:SAFE_REF-win-x64.zip"
           Compress-Archive -Path "$stage\*" -DestinationPath $zip
           (Get-FileHash $zip -Algorithm SHA256).Hash + "  " + $zip | Set-Content "$zip.sha256"
           Get-Content "$zip.sha256"
 
-      # На PR публикации нет — только артефакт для глаз.
-      - name: Upload artifact (PR run)
-        if: github.event_name == 'pull_request'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: whisper-cpp-vulkan-win-x64
@@ -90,17 +103,31 @@ jobs:
             whisper-cpp-vulkan-*.zip
             whisper-cpp-vulkan-*.zip.sha256
 
+  # Публикация отделена от сборки: только ручной запуск и только этому job'у
+  # выдан contents: write (least privilege).
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: whisper-cpp-vulkan-win-x64
+
       - name: Publish engine release
-        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: engine-whisper-cpp-${{ env.WHISPER_REF }}-vulkan
+          tag_name: engine-whisper-cpp-${{ needs.build.outputs.safe_ref }}-vulkan
           name: "Движок whisper.cpp ${{ env.WHISPER_REF }} (Vulkan, win-x64)"
           body: |
             Служебный релиз: whisper-cli/whisper-server, собранные с Vulkan-бэкендом
             для AMD-пути Reku (официальные релизы whisper.cpp не содержат Windows-Vulkan
-            бинарников). Собрано этим workflow из ggml-org/whisper.cpp@${{ env.WHISPER_REF }},
-            Vulkan SDK ${{ env.VULKAN_VERSION }}. Проверка целостности — файл .sha256.
+            бинарников). Собрано workflow build-whisper-cpp из
+            ggml-org/whisper.cpp@${{ env.WHISPER_REF }}, Vulkan SDK ${{ env.VULKAN_VERSION }}.
+            Проверка целостности — файл .sha256.
           make_latest: "false"
           files: |
             whisper-cpp-vulkan-*.zip
