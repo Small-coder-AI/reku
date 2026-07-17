@@ -7,6 +7,12 @@ on:
 permissions:
   contents: write
 
+# У hosted-раннера Windows у python stdout НЕ консоль -> кодировка cp1252;
+# тесты и селфтест печатают русский текст и падали бы с UnicodeEncodeError
+# (первый прогон v0.2.0 упал именно так). PYTHONUTF8 переводит весь I/O в UTF-8.
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     runs-on: windows-latest
