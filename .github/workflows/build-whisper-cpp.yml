@@ -39,9 +39,12 @@ jobs:
       - name: Install Vulkan SDK
         shell: pwsh
         run: |
-          curl.exe -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" -L `
-            "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/VulkanSDK-$env:VULKAN_VERSION-Installer.exe"
-          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install | Out-Null
+          $exe = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
+          curl.exe -fSL -o $exe `
+            "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          # страж от «скачалась страница ошибки вместо инсталлятора» (реальный ~320 МБ)
+          if ((Get-Item $exe).Length -lt 100MB) { Write-Error "installer too small: $((Get-Item $exe).Length) bytes"; exit 1 }
+          & $exe --accept-licenses --default-answer --confirm-command install | Out-Null
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
           Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
 
