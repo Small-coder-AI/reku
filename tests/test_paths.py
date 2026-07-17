@@ -176,6 +176,17 @@ with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _
     ok &= check("data_dir дев-чекаут вне Programs\\Reku = корень чекаута",
                 d == _dev_root)
 
+# pip/uv-установка (uv tool install reku): пакет в site-packages — данные должны
+# уйти в %APPDATA%\Reku, а не лечь рядом с кодом (upgrade/uninstall снёс бы модели)
+with tempfile.TemporaryDirectory() as _local, tempfile.TemporaryDirectory() as _pdata:
+    with fake_installed_package(_local, _pdata):
+        config.__file__ = os.path.join(_local, "uv", "tools", "reku", "Lib",
+                                       "site-packages", "reku", "config.py")
+        _reset_data_dir_cache()
+        d = config.data_dir()
+    ok &= check("data_dir pip/uv-установка (site-packages) = %APPDATA%\\Reku",
+                d == os.path.join(_pdata, "Reku"))
+
 # новые дефолты конфига
 c = config.Config()
 ok &= check("device дефолт = auto", c.device == "auto")

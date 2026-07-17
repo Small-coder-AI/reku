@@ -10,7 +10,10 @@
 ; идут через ..\ до корня репозитория.
 
 #define MyAppName "Reku"
-#define MyAppVersion "0.1.0"
+; версию передаёт релизный CI (ISCC /DMyAppVersion=X.Y.Z); дефолт — для локальной сборки
+#ifndef MyAppVersion
+  #define MyAppVersion "0.2.0"
+#endif
 #define MyAppExe "Reku.exe"
 #define MyAppPublisher "Ruslan Kobernik"
 

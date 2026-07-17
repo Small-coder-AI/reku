@@ -54,6 +54,28 @@ session has TLS 1.2 disabled — enable it and repeat the install command:
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 ```
 
+### Alternative: installer from Releases
+
+Download `Reku-setup.exe` from the [releases page](https://github.com/Small-coder-AI/reku/releases)
+and run it — a per-user install, no admin rights. Windows SmartScreen may warn
+"Windows protected your PC" — click **"More info" → "Run anyway"** (the app is not signed
+with a paid certificate, but the source is open). The installer bundles **both** engines
+(CUDA + OpenVINO), so it is much heavier than the script install above — the script
+remains the recommended path.
+
+### Alternative: via uv (for developers)
+
+With [uv](https://docs.astral.sh/uv/) installed, pick the extra matching your hardware:
+
+```powershell
+uv tool install "reku[cuda] @ git+https://github.com/Small-coder-AI/reku"    # NVIDIA GPU
+uv tool install "reku[intel] @ git+https://github.com/Small-coder-AI/reku"   # Intel iGPU/NPU
+uv tool install "reku @ git+https://github.com/Small-coder-AI/reku"          # CPU only
+```
+
+Then run `reku` in a **new** terminal window. Settings and models live in `%APPDATA%\Reku`.
+Update later with `uv tool upgrade reku`.
+
 ## Usage
 
 ```powershell
@@ -125,6 +147,11 @@ Build smoke test: `tests\test_frozen_smoke.py` (env var `REKU_SMOKE_DEVICE` = `c
 
 **The installer** (Inno Setup, per-user — no admin rights) installs into `%LOCALAPPDATA%\Programs\Reku`, creates a Start Menu shortcut (+ an optional desktop one),
 optional autostart and an uninstaller. Requires Inno Setup: `winget install JRSoftware.InnoSetup`.
+
+**Releases**: pushing a `vX.Y.Z` tag triggers CI (`.github/workflows/release.yml`) that
+builds the same installer and attaches it to the GitHub Release. Before tagging, bump
+`version` in `pyproject.toml` and `__version__` in `reku/__init__.py` — CI verifies both
+match the tag.
 
 ## How it works
 
