@@ -1,0 +1,53 @@
+# Метаданные пакета и вход для `uv tool install` / `pip install`.
+# ВАЖНО: пины зависимостей дублируются в requirements.txt (его читает install.ps1,
+# фильтруя строки по профилю железа) — менять версии в ОБОИХ файлах синхронно.
+[project]
+name = "reku"
+version = "0.2.0"
+description = "Local push-to-talk dictation for Windows: voice to text in the active window"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ruslan Kobernik" }]
+keywords = ["windows", "dictation", "speech-to-text", "whisper", "push-to-talk"]
+dependencies = [
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.7.2",
+    "numpy==2.2.4",
+    "sounddevice==0.5.5",
+    "pynput==1.8.2",
+    "pyperclip==1.11.0",
+    "PySide6==6.11.1",
+]
+
+[project.optional-dependencies]
+# CUDA-библиотеки (pip-пакеты nvidia-*): DLL кладутся в site-packages/nvidia/<lib>/bin,
+# cuda_setup.py добавляет эти каталоги в PATH до импорта faster_whisper.
+cuda = [
+    "nvidia-cublas-cu12==12.9.2.10",
+    "nvidia-cuda-nvrtc-cu12==12.9.86",
+    "nvidia-cudnn-cu12==9.23.0.39",
+]
+# Intel iGPU/NPU-путь (OpenVINOBackend): GenAI-пайплайн + рантайм.
+intel = [
+    "openvino-genai==2026.2.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Small-coder-AI/reku"
+Issues = "https://github.com/Small-coder-AI/reku/issues"
+
+[project.gui-scripts]
+reku = "reku.gui:main"
+
+[dependency-groups]
+# pillow — только для scripts/make_ico.py (перегенерация иконки)
+dev = ["pyinstaller>=6", "Pillow==12.2.0"]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reku"]

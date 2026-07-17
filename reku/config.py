@@ -46,7 +46,10 @@ def data_dir() -> str:
     повторится при следующем запуске).
     Из исходников: корень репозитория (родитель пакета reku/) — там же лежат
     config.json и models/ для разработки, как и до переезда config.py в reku/.
-    ИСКЛЮЧЕНИЕ: install.ps1 кладёт код в %LOCALAPPDATA%\\Programs\\<APP_NAME> и
+    ИСКЛЮЧЕНИЕ 1: pip/uv-установка (uv tool install reku) — пакет живёт в
+    site-packages, данные уходят в %APPDATA%\\<APP_NAME> (рядом с кодом нельзя:
+    upgrade/uninstall пакета снёс бы модели).
+    ИСКЛЮЧЕНИЕ 2: install.ps1 кладёт код в %LOCALAPPDATA%\\Programs\\<APP_NAME> и
     запускает его исходниками (venv python, БЕЗ заморозки в .exe) — это тоже
     прод-инсталляция, хоть и не frozen: данные обязаны пережить обновление кода
     (install.ps1 заменяет reku/ целиком при апдейте) и явный вопрос при удалении,
@@ -72,7 +75,14 @@ def data_dir() -> str:
         local_appdata = os.environ.get("LOCALAPPDATA")
         installed_root = (os.path.join(local_appdata, "Programs", APP_NAME)
                            if local_appdata else None)
-        if installed_root and (os.path.normcase(os.path.normpath(root))
+        if os.path.basename(root).lower() == "site-packages":
+            # pip/uv-установка (uv tool install reku, pip install reku): пакет лежит
+            # в site-packages — писать config.json и модели (~3 ГБ) рядом с кодом
+            # нельзя (снесутся при upgrade/uninstall пакета). Данные — в %APPDATA%,
+            # как у frozen и install.ps1-инсталляций.
+            new = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
+            _RESOLVED_DATA_DIR = _migrate_data_dir(new)
+        elif installed_root and (os.path.normcase(os.path.normpath(root))
                                 == os.path.normcase(os.path.normpath(installed_root))):
             # Прод-установка install.ps1, запущенная из исходников (см. docstring
             # выше) — данные всё равно уходят в %APPDATA%, а не остаются в InstallDir.

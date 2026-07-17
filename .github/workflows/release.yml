@@ -1,0 +1,52 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Полная сборка: и CUDA-, и OpenVINO-путь в одном exe (авто-выбор по железу
+      # делает backends.py в рантайме) — поэтому ставим все extras.
+      - name: Sync dependencies
+        run: uv sync --all-extras
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $ver = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $ver) {
+            Write-Error "Tag '$tag' != pyproject version '$ver' — bump versions before tagging"
+            exit 1
+          }
+          $init = (Select-String -Path reku/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          if ($init -ne $ver) {
+            Write-Error "reku/__init__.py __version__ '$init' != pyproject version '$ver'"
+            exit 1
+          }
+          "APP_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build standalone exe (PyInstaller)
+        run: uv run pyinstaller packaging/reku.spec --noconfirm
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$env:APP_VERSION packaging\reku.iss
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Reku-setup.exe
