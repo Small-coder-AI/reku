@@ -390,11 +390,35 @@ class WhisperCppBackend(Backend):
         if not want_prob:
             # детекция языка — лишний проход энкодера, нужна только фильтру
             fields["no_language_probabilities"] = "true"
-        resp = self._server.inference(whisper_cpp.encode_wav(audio), fields)
+        resp = self._inference(whisper_cpp.encode_wav(audio), fields)
         segments = whisper_cpp.segments_from_response(resp)
         prob = resp.get("detected_language_probability") if want_prob else None
         lang = (resp.get("detected_language") or cfg.language) if want_prob else cfg.language
         return segments, whisper_cpp.make_wcpp_info(lang, duration, prob)
+
+    def _inference(self, wav: bytes, fields: dict) -> dict:
+        """Запрос с автоперезапуском сервера. whisper-server — отдельный процесс
+        и может умереть сам по себе (сброс/обновление драйвера GPU во время
+        Vulkan-вычислений, антивирус, OOM). Без рестарта каждая следующая
+        диктовка молча падала бы до перезапуска всего приложения."""
+        import sys
+        import urllib.error
+        if self._server is None:
+            raise RuntimeError("модель ещё не загружена (whisper-server не запущен)")
+        if not self._server.alive():
+            print("[whispercpp] whisper-server умер — перезапускаю",
+                  file=sys.stderr, flush=True)
+            self._server.stop()
+            self._server.start()
+        try:
+            return self._server.inference(wav, fields)
+        except urllib.error.URLError:
+            # умер/завис между проверкой и запросом — одна повторная попытка
+            print("[whispercpp] whisper-server не ответил — перезапускаю",
+                  file=sys.stderr, flush=True)
+            self._server.stop()
+            self._server.start()
+            return self._server.inference(wav, fields)
 
     def close(self):
         s, self._server = self._server, None

@@ -26,6 +26,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -61,7 +62,9 @@ def server_exe_path() -> str:
 
 
 def _download(url: str, dest: str) -> None:
-    with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+    # timeout обязателен: без него молча зависший сокет (файрвол, прокси) вешал бы
+    # load_model — и UI в «loading» — навсегда; таймаут per-операция, не на весь файл
+    with urllib.request.urlopen(url, timeout=30) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
 
 
@@ -89,19 +92,39 @@ def ensure_engine(on_progress=None) -> str:
     if on_progress:
         on_progress(ENGINE_ZIP)
     d = engine_dir()
-    os.makedirs(os.path.dirname(d), exist_ok=True)
+    engines_root = os.path.dirname(d)
+    os.makedirs(engines_root, exist_ok=True)
     zpath = d + ".zip.tmp"
-    _download(ENGINE_URL, zpath)
-    _verify_sha256(zpath, ENGINE_SHA256)
     tmp = d + ".tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    with zipfile.ZipFile(zpath) as z:
-        z.extractall(tmp)
-    os.remove(zpath)
+    try:
+        _download(ENGINE_URL, zpath)
+        _verify_sha256(zpath, ENGINE_SHA256)
+        shutil.rmtree(tmp, ignore_errors=True)
+        with zipfile.ZipFile(zpath) as z:
+            z.extractall(tmp)
+    finally:
+        # не оставляем недокачанный/уже распакованный zip (~45 МБ);
+        # _verify_sha256 при несовпадении удаляет его сам — отсюда suppress
+        try:
+            os.remove(zpath)
+        except OSError:
+            pass
     shutil.rmtree(d, ignore_errors=True)
+    if os.path.exists(d):
+        # Windows: rmtree(ignore_errors=True) молча не удалил занятый каталог
+        # (антивирус/Explorer держит файл) — os.replace ниже упал бы невнятно
+        raise OSError(f"не удалось заменить каталог движка (занят другим "
+                      f"процессом?): {d}. Закрой другие копии приложения и "
+                      f"повтори.")
     os.replace(tmp, d)
     if not os.path.isfile(exe):
         raise FileNotFoundError(f"в архиве движка нет {SERVER_EXE} ({ENGINE_URL})")
+    # прибираем движки прежних версий (каждый ~45 МБ; каталог версионирован
+    # по тегу, так что успешное обновление делает старые ненужными)
+    for name in os.listdir(engines_root):
+        full = os.path.join(engines_root, name)
+        if full != d:
+            shutil.rmtree(full, ignore_errors=True)
     return exe
 
 
@@ -237,15 +260,36 @@ def _kill_on_parent_death(proc) -> None:
                         ("PeakProcessMemoryUsed", ctypes.c_size_t),
                         ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
+        # restype/argtypes обязательны: HANDLE на x64 — 64 бита, дефолтный
+        # c_int обрезал бы его, и job тихо переставал бы работать
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        k32.SetInformationJobObject.restype = wintypes.BOOL
+        k32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        k32.AssignProcessToJobObject.restype = wintypes.BOOL
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+
         job = k32.CreateJobObjectW(None, None)
         if not job:
             return
         info = EXTENDED_LIMITS()
         info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         # 9 = JobObjectExtendedLimitInformation
-        k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
-        k32.AssignProcessToJobObject(job, wintypes.HANDLE(int(proc._handle)))
-        proc._reku_job = job   # хэндл живёт с процессом: закрыли хэндл -> умер job
+        set_ok = k32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                             ctypes.sizeof(info))
+        asg_ok = k32.AssignProcessToJobObject(job, wintypes.HANDLE(int(proc._handle)))
+        if not (set_ok and asg_ok):
+            # страховка не сработала — не смертельно (останется atexit/stop),
+            # но молчать нельзя: осиротевший сервер держит ~1 ГБ VRAM
+            print("[whispercpp] Job Object не назначен (set="
+                  f"{bool(set_ok)}, assign={bool(asg_ok)}) — при жёстком "
+                  "убийстве приложения сервер может осиротеть",
+                  file=sys.stderr, flush=True)
+            return
+        # хэндл живёт с процессом и НЕ закрывается: KILL_ON_JOB_CLOSE означает,
+        # что закрытие хэндла (в т.ч. смертью нашего процесса) убивает сервер
+        proc._reku_job = job
     except Exception:
         pass
 
@@ -304,6 +348,10 @@ class ServerProcess:
         self.stop()
         raise TimeoutError(f"whisper-server не поднялся за {timeout:.0f} с; "
                            f"лог: {self.log_path}")
+
+    def alive(self) -> bool:
+        """Жив ли серверный процесс (не факт, что уже готов — это /health)."""
+        return self._proc is not None and self._proc.poll() is None
 
     def inference(self, wav_bytes: bytes, fields: dict,
                   timeout: float = 300.0) -> dict:
