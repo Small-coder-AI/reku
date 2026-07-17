@@ -462,7 +462,9 @@ class MainWindow(QWidget):
         if self._state == "recording":
             threading.Thread(target=self.engine.stop_and_transcribe, daemon=True).start()
         elif self._state in ("idle", "error"):   # error: повторная попытка (микрофон могли подключить)
-            self.engine.start_rec()
+            # в поток, как и stop: путь ошибки start_rec пере-инициализирует PortAudio
+            # (сотни мс) — синхронный вызов подвесил бы GUI-поток
+            threading.Thread(target=self.engine.start_rec, daemon=True).start()
 
     def _lang_changed(self):
         self.cfg.language = self.lang_combo.currentData()

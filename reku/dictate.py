@@ -30,6 +30,9 @@ from reku import postprocess
 # Инференс инкапсулирован в backends.py (faster_whisper грузится лениво там,
 # строго после cuda_setup). DictationApp работает через self.backend.
 
+# единый текст предупреждения (старт приложения и путь ошибки записи)
+MIC_NOT_FOUND_MSG = "Микрофон не найден — подключи микрофон и нажми запись"
+
 
 def mic_available() -> bool:
     """Есть ли в системе устройство записи. PortAudio снимает список устройств ОДИН
@@ -199,11 +202,26 @@ class DictationApp:
                     e = e2
             if self._stream is None:
                 self._recording = False
-                self._last_error = (str(e) if mic_ok else
-                                    "Микрофон не найден — подключи и попробуй ещё раз")
+                self._last_error = str(e) if mic_ok else MIC_NOT_FOUND_MSG
                 print(f"[start_rec] не смог открыть микрофон: {e}", file=sys.stderr)
                 self._set_state("error")
                 return
+        # пока стрим открывался (ретрай с пере-инициализацией PortAudio — сотни мс),
+        # мог прийти stop_and_transcribe (короткий тап PTT): он увидел _recording=True,
+        # сбросил флаг и вышел (закрывать было нечего — self._stream ещё None). Без
+        # перепроверки под локом остался бы вечно открытый стрим («горящий» микрофон)
+        # и state recording при _recording=False.
+        with self._lock:
+            orphan = None
+            if not self._recording:
+                orphan, self._stream = self._stream, None
+        if orphan is not None:
+            try:
+                orphan.stop()
+                orphan.close()
+            except Exception:
+                pass
+            return
         self._set_state("recording")
 
     def stop_and_transcribe(self):
@@ -320,10 +338,9 @@ class DictationApp:
         # проверяем микрофон сразу, не дожидаясь загрузки/скачивания модели (минуты):
         # раньше его отсутствие всплывало только при попытке записи невнятным
         # «Unanticipated host error [PaErrorCode -9999]»
-        _mic_warn = "Микрофон не найден — подключи микрофон и нажми запись"
         mic_ok = mic_available()
         if not mic_ok:
-            self._last_error = _mic_warn
+            self._last_error = MIC_NOT_FOUND_MSG
             print("[start] микрофон не найден", file=sys.stderr, flush=True)
             self._set_state("error")
         if self.backend is None:
@@ -341,7 +358,7 @@ class DictationApp:
         if not mic_ok and not mic_available():
             # статусы загрузки модели успели перекрыть раннее предупреждение —
             # возвращаем его, если микрофон так и не появился
-            self._last_error = _mic_warn
+            self._last_error = MIC_NOT_FOUND_MSG
             self._set_state("error")
 
     def run(self):
