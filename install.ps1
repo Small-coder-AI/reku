@@ -67,8 +67,11 @@ if ($SourcePath) {
 # ── 1. Железо ────────────────────────────────────────────────
 Write-Step "Определяю железо..."
 $gpus = (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue).Name -join "; "
+# порядок повторяет auto-цепочку backends.py: cuda -> amd -> igpu -> cpu
+# (дискретный Radeon быстрее десктопных Intel-iGPU, поэтому AMD раньше Intel)
 $hwProfile = "cpu"
 if ($gpus -match "NVIDIA") { $hwProfile = "cuda" }
+elseif ($gpus -match "AMD|Radeon") { $hwProfile = "amd" }
 elseif ($gpus -match "Intel.*(Arc|Iris|Graphics)") { $hwProfile = "intel" }
 Write-Host "    Видеоадаптеры: $gpus"
 Write-Host "    Профиль установки: $hwProfile"
@@ -124,12 +127,29 @@ $vpy = Join-Path $venv "Scripts\python.exe"
 Write-Step "Ставлю зависимости (профиль $hwProfile; это займёт несколько минут)..."
 $req = Get-Content (Join-Path $InstallDir "requirements.txt")
 if ($hwProfile -ne "cuda") { $req = $req | Where-Object { $_ -notmatch "^nvidia-" } }
-if ($hwProfile -eq "cpu")  { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
+# amd-путь работает через whisper.cpp (отдельный exe, качается ниже) — openvino не нужен.
+# ИСКЛЮЧЕНИЕ: если рядом с Radeon есть Intel iGPU, openvino оставляем запасным путём —
+# при нерабочем Vulkan (старый/битый драйвер) рантайм-цепочка auto тогда возьмёт igpu,
+# а не провалится на CPU (замечание ревью PR #12).
+$dropOpenvino = ($hwProfile -eq "cpu") -or
+                ($hwProfile -eq "amd" -and $gpus -notmatch "Intel.*(Arc|Iris|Graphics)")
+if ($dropOpenvino) { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
 $reqFile = Join-Path $InstallDir "requirements.effective.txt"
 $req | Set-Content $reqFile -Encoding UTF8
 & $vpy -m pip install --upgrade pip --quiet
 & $vpy -m pip install -r $reqFile
 if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
+
+# Движок whisper.cpp для AMD — наш CI-билд из GitHub Release; URL и sha256
+# приколочены в reku\whisper_cpp.py (единственный источник правды), поэтому
+# качаем через него, а не дублируем пин здесь. Кладётся в %APPDATA%\Reku\engines.
+if ($hwProfile -eq "amd") {
+    Write-Step "Скачиваю движок whisper.cpp (Vulkan, ~45 МБ)..."
+    & $vpy -c "import sys; sys.path.insert(0, r'$InstallDir'); from reku import whisper_cpp; whisper_cpp.ensure_engine()"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Движок не скачался — не страшно: приложение докачает его при первом запуске."
+    }
+}
 
 # ── 5. Ярлыки ────────────────────────────────────────────────
 Write-Step "Создаю ярлыки..."
