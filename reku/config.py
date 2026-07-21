@@ -127,7 +127,11 @@ class Config:
     hotwords: str = ""               # словарь терминов: свои бренды/термины через запятую (sot_prev-биас)
     vad_filter: bool = True          # режет тишину/шум до распознавания (главная защита)
     condition_on_previous_text: bool = False  # False = меньше петель-повторов
-    no_repeat_ngram_size: int = 3    # запрет повтора n-грамм при декоде (0 = выкл)
+    # no_repeat_ngram_size — 0 (выкл): запрет не отличает петлю от легитимного повтора
+    # и коверкает 2-е/3-е вхождение слова («стратегия» → «стратлегии», «стратégия»).
+    # От петель достаточно condition_on_previous_text=False + встроенного в faster-whisper
+    # temperature fallback (compression_ratio_threshold) + пост-фильтра (postprocess.py).
+    no_repeat_ngram_size: int = 0    # запрет повтора n-грамм при декоде (>0 = вкл, не рекомендуется)
 
     # ── пост-фильтр галлюцинаций ─────────────────────────────
     drop_hallucinations: bool = True         # резать фирменные фантомы Whisper
