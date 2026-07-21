@@ -123,6 +123,10 @@ Created on first launch. The essentials:
 The defaults are tuned for **Russian** dictation. For another language, set `language`
 accordingly (or `""` for auto-detect) and adapt `initial_prompt` to that language.
 
+**Upgrading from an older build?** `config.json` keeps your stored values, so
+`"no_repeat_ngram_size": 3` written by old versions survives updates — set it to `0`
+(or delete the line): that old default mangled legitimately repeated words.
+
 **Latin letters inside Russian words** are cured by the combo `language="ru"` + a Russian
 `initial_prompt` + terms in `hotwords` (see `scripts/ab_test.py` — it compares configs on
 the same voice take and prints the "% of mixed words"). The **theme** switches on the fly
