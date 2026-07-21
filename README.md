@@ -115,7 +115,7 @@ Created on first launch. The essentials:
 | `beam_size` | `5` | `1` is faster, `5` is more accurate |
 | `vad_filter` | `true` | cuts silence/noise — the **main** hallucination guard |
 | `condition_on_previous_text` | `false` | `false` = fewer repetition loops |
-| `no_repeat_ngram_size` | `3` | forbids n-gram repeats during decoding |
+| `no_repeat_ngram_size` | `0` | `0` = off: the n-gram ban cannot tell a loop from a legitimately repeated word and mangles the 2nd/3rd occurrence; loops are already covered by the layers above |
 | `drop_hallucinations` | `true` | drops Whisper's trademark phantom captions (blocklist in postprocess.py) |
 | `min_language_probability` | `0.0` | `>0` (e.g. 0.4) — mute output when language detection is uncertain (likely not speech) |
 | `insert_method` | `paste` | `paste` (clipboard + Ctrl+V) or `type` (character by character) |

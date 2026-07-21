@@ -2,7 +2,8 @@
 
 Слои защиты (по убыванию надёжности, см. диагностику diag_halluc.py):
   1. VAD (в transcribe) — режет не-речь в ноль. Главная защита, не здесь.
-  2. Декодер: condition_on_previous_text=False + no_repeat_ngram_size — меньше петель.
+  2. Декодер: condition_on_previous_text=False + temperature fallback самого
+     faster-whisper (перекодирует окно при compression_ratio > 2.4) — меньше петель.
   3. Здесь: блок-лист фирменных фантомов + дедуп повторов + порог compression_ratio.
   4. Опционально (в вызывающем коде): порог info.language_probability.
 """
