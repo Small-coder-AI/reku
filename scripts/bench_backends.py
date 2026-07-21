@@ -101,7 +101,7 @@ def _bench_ct2(model_name: str, wavs: list) -> list[dict]:
             segments, info = m.transcribe(
                 audio, language=LANG, beam_size=5, vad_filter=True,
                 initial_prompt=INITIAL_PROMPT,
-                condition_on_previous_text=False, no_repeat_ngram_size=3)
+                condition_on_previous_text=False, no_repeat_ngram_size=0)
             text = " ".join(s.text.strip() for s in segments)  # генератор: инференс тут
             times.append(time.perf_counter() - t0)
         rows.append(dict(engine=f"CPU-ct2/{model_name}", wav=os.path.basename(path),
