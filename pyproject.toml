@@ -4,7 +4,7 @@
 # и перегенерировать uv.lock (`uv lock`); транзитивные пины — см. [tool.uv] ниже.
 [project]
 name = "reku"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local push-to-talk dictation for Windows: voice to text in the active window"
 readme = "README.md"
 requires-python = ">=3.12"
