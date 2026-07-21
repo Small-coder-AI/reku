@@ -29,7 +29,7 @@ LAT = re.compile(r"[A-Za-z]")
 BRANDS = "Claude Code, GitHub, Docker, PostgreSQL, faster-whisper, CUDA."
 
 COMMON = dict(beam_size=5, vad_filter=True,
-              condition_on_previous_text=False, no_repeat_ngram_size=3)
+              condition_on_previous_text=False, no_repeat_ngram_size=0)
 
 CONFIGS = [
     ("A: латинский промпт, авто-язык (как было)",

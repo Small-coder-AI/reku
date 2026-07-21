@@ -115,13 +115,17 @@ Created on first launch. The essentials:
 | `beam_size` | `5` | `1` is faster, `5` is more accurate |
 | `vad_filter` | `true` | cuts silence/noise — the **main** hallucination guard |
 | `condition_on_previous_text` | `false` | `false` = fewer repetition loops |
-| `no_repeat_ngram_size` | `3` | forbids n-gram repeats during decoding |
+| `no_repeat_ngram_size` | `0` | `0` = off: the n-gram ban cannot tell a loop from a legitimately repeated word and mangles the 2nd/3rd occurrence; loops are already covered by the layers above |
 | `drop_hallucinations` | `true` | drops Whisper's trademark phantom captions (blocklist in postprocess.py) |
 | `min_language_probability` | `0.0` | `>0` (e.g. 0.4) — mute output when language detection is uncertain (likely not speech) |
 | `insert_method` | `paste` | `paste` (clipboard + Ctrl+V) or `type` (character by character) |
 
 The defaults are tuned for **Russian** dictation. For another language, set `language`
 accordingly (or `""` for auto-detect) and adapt `initial_prompt` to that language.
+
+**Upgrading from an older build?** `config.json` keeps your stored values, so
+`"no_repeat_ngram_size": 3` written by old versions survives updates — set it to `0`
+(or delete the line): that old default mangled legitimately repeated words.
 
 **Latin letters inside Russian words** are cured by the combo `language="ru"` + a Russian
 `initial_prompt` + terms in `hotwords` (see `scripts/ab_test.py` — it compares configs on
