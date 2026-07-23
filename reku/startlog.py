@@ -26,15 +26,26 @@ def init(path=None):
     логирования нельзя ни при каких условиях."""
     if sys.stdout is not None or sys.stderr is not None:
         return None
+    import io
+    buf = io.StringIO()
+    # Сразу в буфер: default_path() -> config.data_dir() при первом запуске
+    # печатает диагностику миграции каталога — без буфера она ушла бы в
+    # None-поток и потерялась именно в том сценарии («после апдейта не вижу
+    # моделей»), ради которого лог и заведён (замечание ревью PR #15).
+    sys.stdout = sys.stderr = buf
     try:
         path = path or default_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path):
             os.replace(path, path + ".1")
         f = open(path, "w", encoding="utf-8", buffering=1)
+        f.write(buf.getvalue())
         sys.stdout = sys.stderr = f
         import faulthandler
         faulthandler.enable(file=f)
         return path
     except Exception:
+        # вернуть None-потоки как было: остаться на StringIO нельзя — он бы
+        # молча копил весь вывод процесса до конца жизни
+        sys.stdout = sys.stderr = None
         return None
