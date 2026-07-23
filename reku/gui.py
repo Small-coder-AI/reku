@@ -6,10 +6,24 @@ orb'ом, живым вэйвформом, настройками и треем.
 import os
 import sys
 
+# Первым делом — лог старта: под pythonw stdout/stderr нет, и без этого любая
+# ошибка ниже (вплоть до битого PySide6) умирает молча. Строго до остальных импортов.
+from reku import startlog
+startlog.init()
+
 from reku import APP_NAME
 
 if sys.stdout:
     print(f"{APP_NAME} UI: запускаюсь…", flush=True)
+
+# Обход краша на Python 3.12.0: import-хук shiboken (его ставит импорт PySide6)
+# зовёт inspect.getsource для каждого нового модуля; на fake-модулях six
+# (six.moves.*, их тянет pynput) это TypeError, чьё форматирование на 3.12.0
+# падает вторичным AttributeError ('_SixMetaPathImporter' без '_path') — процесс
+# умирает на старте. Импортируем pynput ДО PySide6: six.moves попадает в
+# sys.modules раньше, чем встаёт хук. Боевой случай 2026-07 (Python 3.12.0);
+# на 3.12.10 не воспроизводится. Не переносить ниже PySide6!
+import pynput  # noqa: F401
 
 from PySide6.QtCore import Qt, QObject, Signal, QPoint, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
