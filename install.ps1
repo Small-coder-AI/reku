@@ -22,8 +22,40 @@ $RunKey     = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
+function Stop-RekuProcesses {
+    # Живой процесс держит DLL: удаление/обновление при нём молча оставляет
+    # огрызки (боевой случай: «удалённый» Reku.exe пережил -Uninstall, потому
+    # что был запущен, и пользователь месил кашу из двух установок). Убиваем
+    # только процессы ИЗ нашего каталога, а не все python на машине.
+    Get-Process Reku, python, pythonw -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path -like "$InstallDir*" } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Remove-ExeInstall {
+    # Запасной путь дистрибуции — exe-инсталлятор (Inno Setup) — ставится В ЭТУ ЖЕ
+    # папку. Его остатки (Reku.exe, _internal, ярлыки и автозапуск на Reku.exe)
+    # уводили пользователя в старую сборку вместо свежей установки. Сносим штатно
+    # его же деинсталлятором: тот уберёт и свои ярлыки, и свой автозапуск в HKCU.
+    $unins = Join-Path $InstallDir "unins000.exe"
+    if (Test-Path $unins) {
+        Write-Step "Нашёл установку exe-инсталлятором — удаляю её штатно..."
+        Start-Process $unins -ArgumentList "/VERYSILENT" -Wait
+        # unins000 перезапускает свою копию из %TEMP% и возвращает управление
+        # сразу — ждём, пока файлы реально исчезнут (до 30 с)
+        $exe = Join-Path $InstallDir "Reku.exe"
+        for ($i = 0; $i -lt 30 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
+    }
+    # добиваем, что могло остаться (залоченные при деинсталляции файлы)
+    foreach ($it in @("Reku.exe", "_internal", "unins000.exe", "unins000.dat")) {
+        Remove-Item -Recurse -Force (Join-Path $InstallDir $it) -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-Uninstall {
     Write-Step "Удаляю $AppName..."
+    Stop-RekuProcesses
+    Remove-ExeInstall
     Remove-Item (Join-Path $StartMenu "$AppName.lnk") -ErrorAction SilentlyContinue
     Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "$AppName.lnk") -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $RunKey -Name $AppName -ErrorAction SilentlyContinue
@@ -99,6 +131,8 @@ Write-Host "    Python: $(& $py.Split()[0] $py.Split()[1..99] --version)"
 
 # ── 3. Код ───────────────────────────────────────────────────
 Write-Step "Получаю код в $InstallDir..."
+Stop-RekuProcesses      # живые процессы держат DLL — обновление оставило бы огрызки
+Remove-ExeInstall       # остатки установки exe-инсталлятором (общая папка)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # Copy-Item -Recurse при существующем каталоге СЛИВАЕТ дерево (перезаписывает
 # одноимённые файлы, но не удаляет исчезнувшие в новой версии) — при обновлении
@@ -139,6 +173,29 @@ $req | Set-Content $reqFile -Encoding UTF8
 & $vpy -m pip install --upgrade pip --quiet
 & $vpy -m pip install -r $reqFile
 if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
+
+# ── 4б. Проверка окружения ───────────────────────────────────
+# Битые файлы в venv для pip невидимы: пакет числится установленным, а импорт
+# падает (боевой случай: null bytes в site-packages после сбоя — приложение
+# «просто не запускалось»). Проверяем реальным импортом; при провале один раз
+# пересоздаём окружение с нуля, без кэша pip.
+function Test-VenvHealth {
+    & $vpy -c "import PySide6.QtCore, numpy, sounddevice, pynput, pyperclip, faster_whisper"
+    return ($LASTEXITCODE -eq 0)
+}
+Write-Step "Проверяю окружение..."
+if (-not (Test-VenvHealth)) {
+    Write-Warning "Импорт зависимостей падает (вывод выше) — пересоздаю окружение с нуля..."
+    Remove-Item -Recurse -Force $venv
+    & $py.Split()[0] $py.Split()[1..99] -m venv $venv
+    & $vpy -m pip install --upgrade pip --quiet
+    & $vpy -m pip install --no-cache-dir -r $reqFile
+    if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
+    if (-not (Test-VenvHealth)) {
+        throw "Окружение не проходит проверку и после пересоздания — напиши: github.com/Small-coder-AI/reku/issues"
+    }
+    Write-Host "    Окружение пересоздано, проверка пройдена." -ForegroundColor Green
+}
 
 # Движок whisper.cpp для AMD — наш CI-билд из GitHub Release; URL и sha256
 # приколочены в reku\whisper_cpp.py (единственный источник правды), поэтому
