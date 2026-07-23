@@ -124,7 +124,11 @@ def _cuda_compute_types():
 def _cuda_vram_mb():
     """VRAM карты в МБ через nvidia-smi (ставится вместе с драйвером).
     None = не узнать. Зовётся лениво и только для fp32-only карт — ярусу
-    turbo/small в resolve_runtime (остальным картам VRAM не нужен)."""
+    turbo/small в resolve_runtime (остальным картам VRAM не нужен).
+    Мульти-GPU: nvidia-smi сортирует по PCI-шине, а CUDA по умолчанию —
+    FASTEST_FIRST, так что «нулевые» карты могут не совпасть; берём минимум
+    по всем — консервативно в ту же сторону, что и весь ярус (лучше недодать
+    turbo, чем поймать OOM не той карты). Замечание ревью PR #14."""
     import os
     import subprocess
     try:
@@ -134,7 +138,8 @@ def _cuda_vram_mb():
             capture_output=True, text=True, timeout=5,
             # CREATE_NO_WINDOW: под pythonw иначе мигает чёрная консоль
             creationflags=(0x08000000 if os.name == "nt" else 0))
-        return int(out.stdout.splitlines()[0].strip())
+        vals = [int(s.strip()) for s in out.stdout.splitlines() if s.strip()]
+        return min(vals) if vals else None
     except Exception:
         return None
 
