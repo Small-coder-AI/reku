@@ -41,6 +41,86 @@ ok &= check("явный cuda+float16",
             resolve_runtime("cuda", "float16", "medium", cuda_available=True)
             == ("cuda", "float16", "medium"))
 
+# ── compute по возможностям карты (боевые случаи: GTX 1050 Ti, GTX 950) ──
+# Pascal (CC 6.1, GTX 10xx): эффективного fp16 нет -> int8_float32, модель не трогаем
+ok &= check("auto+cuda без fp16 -> int8_float32/large-v3",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types={"int8", "int8_float32", "float32"})
+            == ("cuda", "int8_float32", "large-v3"))
+
+# Maxwell (CC < 6.1, GTX 9xx): только fp32 -> float32; понижение тяжёлых моделей
+# по VRAM: turbo в fp32 ~3.2 ГБ весов + активации -> нужен запас, порог 5.5 ГБ.
+# Много памяти (980 Ti, 6 ГБ) -> turbo (качество ближе к large)
+ok &= check("auto+cuda fp32-only+6GB -> float32/turbo",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types={"float32"}, cuda_vram_mb=6144)
+            == ("cuda", "float32", "large-v3-turbo"))
+
+# Мало памяти (GTX 950, 2 ГБ — боевой случай) -> small: turbo физически не влезает
+ok &= check("auto+cuda fp32-only+2GB -> float32/small",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types={"float32"}, cuda_vram_mb=2048)
+            == ("cuda", "float32", "small"))
+
+# VRAM узнать не удалось -> консервативно small (OOM-«Ошибка» хуже подкачества)
+ok &= check("auto+cuda fp32-only+VRAM? -> float32/small",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types={"float32"})
+            == ("cuda", "float32", "small"))
+
+# turbo в конфиге на карте без памяти тоже понижается
+ok &= check("auto+cuda fp32-only+2GB+turbo -> small",
+            resolve_runtime("auto", "auto", "large-v3-turbo", cuda_available=True,
+                            cuda_compute_types={"float32"}, cuda_vram_mb=2048)
+            == ("cuda", "float32", "small"))
+
+# int8-карта (Pascal): VRAM-ярус не применяется, large остаётся large
+ok &= check("auto+cuda int8+2GB -> int8_float32/large-v3",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types={"int8", "int8_float32", "float32"},
+                            cuda_vram_mb=2048)
+            == ("cuda", "int8_float32", "large-v3"))
+
+# явный compute=float32 от пользователя (карта умеет лучше) ярус НЕ включает:
+# модель не понижается, даже когда VRAM неизвестен
+ok &= check("явный float32 в auto-device не понижает модель",
+            resolve_runtime("auto", "float32", "large-v3", cuda_available=True,
+                            cuda_compute_types={"float16", "float32"})
+            == ("cuda", "float32", "large-v3"))
+
+# fp32-only + лёгкая модель -> не трогаем
+ok &= check("auto+cuda fp32-only+light -> float32/base",
+            resolve_runtime("auto", "auto", "base", cuda_available=True,
+                            cuda_compute_types={"float32"})
+            == ("cuda", "float32", "base"))
+
+# современная карта (RTX): float16 как раньше
+ok &= check("auto+cuda с fp16 -> float16/large-v3",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types={"float16", "int8_float16",
+                                                "int8", "int8_float32", "float32"})
+            == ("cuda", "float16", "large-v3"))
+
+# типы узнать не удалось (None) -> прежнее поведение, float16
+ok &= check("cuda_compute_types=None -> float16 (совместимость)",
+            resolve_runtime("auto", "auto", "large-v3", cuda_available=True,
+                            cuda_compute_types=None)
+            == ("cuda", "float16", "large-v3"))
+
+# явный compute пользователя не подменяется, даже если карта его не умеет
+# (ошибка ct2 всплывёт в UI — осознанный выбор должен падать громко)
+ok &= check("явный float16 не подменяется",
+            resolve_runtime("cuda", "float16", "medium", cuda_available=True,
+                            cuda_compute_types={"float32"})
+            == ("cuda", "float16", "medium"))
+
+# явный cuda + compute=auto тоже адаптируется, но модель не понижается
+# (понижение — только в auto-режиме устройства, как и на cpu-пути)
+ok &= check("явный cuda+auto на fp32-only -> float32/large-v3",
+            resolve_runtime("cuda", "auto", "large-v3", cuda_available=False,
+                            cuda_compute_types={"float32"})
+            == ("cuda", "float32", "large-v3"))
+
 # select_backend: device=api -> ApiBackend (заглушка), .load() кидает NotImplementedError
 cfg_api = S(device="api", compute_type="auto", model="small")
 b = select_backend(cfg_api)
@@ -234,6 +314,32 @@ _b_cuda = select_backend(S(device="auto", compute_type="auto", model="small"),
                          amd_probe=lambda: _ov_calls.append("amd") or True)
 ok &= check("select: cuda найден -> ov/amd-пробы не званы",
             isinstance(_b_cuda, CTranslate2Backend) and _ov_calls == [])
+
+# select_backend прокидывает поддерживаемые картой типы в resolve_runtime
+_b_pascal = select_backend(S(device="auto", compute_type="auto", model="large-v3"),
+                           cuda_probe=lambda: True,
+                           cuda_types_probe=lambda: {"int8", "int8_float32", "float32"})
+ok &= check("select: auto+pascal -> int8_float32",
+            isinstance(_b_pascal, CTranslate2Backend)
+            and _b_pascal.compute_type == "int8_float32")
+
+# явный cuda: device-пробы не зовутся, но типы карты спрашиваются
+_b_exp = select_backend(S(device="cuda", compute_type="auto", model="medium"),
+                        cuda_probe=lambda: _probe_calls.append("cuda2") or False,
+                        cuda_types_probe=lambda: {"float32"})
+ok &= check("select: явный cuda+auto compute -> float32, без device-проб",
+            isinstance(_b_exp, CTranslate2Backend)
+            and _b_exp.compute_type == "float32" and "cuda2" not in _probe_calls)
+
+# select_backend прокидывает VRAM: fp32-only + 6 ГБ -> turbo вместо small
+_b_maxw = select_backend(S(device="auto", compute_type="auto", model="large-v3"),
+                         cuda_probe=lambda: True,
+                         cuda_types_probe=lambda: {"float32"},
+                         cuda_vram_probe=lambda: 6144)
+ok &= check("select: fp32-only+6GB -> turbo",
+            isinstance(_b_maxw, CTranslate2Backend)
+            and _b_maxw.model_id == "large-v3-turbo"
+            and _b_maxw.compute_type == "float32")
 
 # ── cpu_fallback_backend: запасной CPU-бэкенд для auto при сбое OV ──
 from reku.backends import cpu_fallback_backend
