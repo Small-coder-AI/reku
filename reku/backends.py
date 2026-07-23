@@ -109,6 +109,41 @@ def _cuda_available() -> bool:
         return False
 
 
+def _cuda_compute_types():
+    """Какие compute-типы умеет CUDA-карта (ct2 спрашивает драйвер).
+    None = не удалось узнать (нет ct2/карты) — resolve_runtime тогда
+    ведёт себя по-старому (float16)."""
+    try:
+        from reku import cuda_setup  # noqa: F401 — кладёт nvidia-DLL в PATH
+        import ctranslate2
+        return set(ctranslate2.get_supported_compute_types("cuda"))
+    except Exception:
+        return None
+
+
+def _cuda_vram_mb():
+    """VRAM карты в МБ через nvidia-smi (ставится вместе с драйвером).
+    None = не узнать. Зовётся лениво и только для fp32-only карт — ярусу
+    turbo/small в resolve_runtime (остальным картам VRAM не нужен).
+    Мульти-GPU: nvidia-smi сортирует по PCI-шине, а CUDA по умолчанию —
+    FASTEST_FIRST, так что «нулевые» карты могут не совпасть; берём минимум
+    по всем — консервативно в ту же сторону, что и весь ярус (лучше недодать
+    turbo, чем поймать OOM не той карты). Замечание ревью PR #14."""
+    import os
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+            # CREATE_NO_WINDOW: под pythonw иначе мигает чёрная консоль
+            creationflags=(0x08000000 if os.name == "nt" else 0))
+        vals = [int(s.strip()) for s in out.stdout.splitlines() if s.strip()]
+        return min(vals) if vals else None
+    except Exception:
+        return None
+
+
 def _ov_gpu_available() -> bool:
     """Есть ли Intel GPU для OpenVINO. Любой сбой (нет пакета/драйвера) = нет."""
     try:
@@ -138,8 +173,24 @@ def _amd_gpu_available() -> bool:
         return False
 
 
+def _pick_cuda_compute(supported):
+    """compute='auto' на CUDA: лучший тип из поддерживаемых картой (порядок —
+    качество/скорость). float16 требует compute capability >= 7.0 (RTX 20xx+);
+    на старших картах ct2 кидает ValueError вместо тихого фолбэка, и GTX-
+    пользователи получали «Ошибка» из коробки (боевые случаи: GTX 1050 Ti ->
+    int8_float32, GTX 950 -> float32). None (спросить ct2 не удалось) ->
+    float16, прежнее поведение."""
+    if supported is None:
+        return "float16"
+    for cand in ("float16", "int8_float16", "int8_float32", "int8"):
+        if cand in supported:
+            return cand
+    return "float32"
+
+
 def resolve_runtime(device, compute_type, model, *, cuda_available,
-                    ov_gpu_available=False, amd_available=False):
+                    ov_gpu_available=False, amd_available=False,
+                    cuda_compute_types=None, cuda_vram_mb=None):
     """Чистая функция: ('auto'|'cuda'|'cpu'|'igpu'|'npu'|'amd', compute, model) ->
     конкретные значения. Авто-цепочка: cuda -> amd -> igpu -> cpu. AMD раньше
     igpu сознательно: дискретный Radeon сильно быстрее десктопных Intel-iGPU
@@ -147,7 +198,13 @@ def resolve_runtime(device, compute_type, model, *, cuda_available,
     Radeon-iGPU практически не встречается. Понижение модели — ТОЛЬКО в auto:
     на cpu тяжёлые -> small, на igpu — по карте ворот бенча; на amd не понижаем
     (large-v3-q5_0 ~1.1 ГБ влезает в типичные 8 ГБ VRAM). compute_type на amd
-    не действует — квантизация зашита в файл модели."""
+    не действует — квантизация зашита в файл модели.
+
+    cuda_compute_types — множество типов, которые умеет карта (см.
+    _cuda_compute_types), None = не удалось узнать. Учитывается только при
+    compute='auto': явный выбор пользователя не подменяется, пусть падает
+    громко в UI. cuda_vram_mb — память карты (нужна лишь fp32-only картам:
+    ярус turbo/small ниже)."""
     auto = (device == "auto")
     if auto:
         dev = ("cuda" if cuda_available else
@@ -157,12 +214,23 @@ def resolve_runtime(device, compute_type, model, *, cuda_available,
         dev = device
 
     comp = compute_type
-    if comp in ("", "auto", None):
-        comp = "float16" if dev == "cuda" else "int8"
+    comp_auto = comp in ("", "auto", None)
+    if comp_auto:
+        comp = (_pick_cuda_compute(cuda_compute_types) if dev == "cuda"
+                else "int8")
 
     mdl = model
     if auto and dev == "cpu" and model in HEAVY_MODELS:
         mdl = CPU_FALLBACK_MODEL
+    if auto and comp_auto and dev == "cuda" and comp == "float32" \
+            and model in HEAVY_MODELS:
+        # comp=float32 при comp_auto = карта не умеет ничего лучше (Maxwell,
+        # GTX 9xx), а large в fp32 ~6 ГБ не влезет никуда. Ярус по VRAM:
+        # turbo (~3.2 ГБ весов fp32, качество ближе к large) — при >= 5.5 ГБ
+        # с запасом на активации; меньше или неизвестно -> small (OOM-«Ошибка»
+        # хуже подкачества). Явный float32 от пользователя ярус НЕ включает.
+        mdl = ("large-v3-turbo" if (cuda_vram_mb or 0) >= 5500
+               else CPU_FALLBACK_MODEL)
     if auto and dev == "igpu":
         mdl = IGPU_AUTO_SUBSTITUTE.get(model, model)
     if auto and dev == "amd" and model not in WCPP_MODEL_MAP:
@@ -471,20 +539,33 @@ def cpu_fallback_backend(cfg):
     return CTranslate2Backend(model=mdl, device="cpu", compute_type="int8")
 
 
-def select_backend(cfg, *, cuda_probe=None, ov_probe=None, amd_probe=None):
+def select_backend(cfg, *, cuda_probe=None, ov_probe=None, amd_probe=None,
+                   cuda_types_probe=None, cuda_vram_probe=None):
     """Маршрутизация: cfg.device -> конкретный Backend (ещё не загружен).
     Пробы зовутся только в auto-режиме и лениво: amd — только если CUDA нет,
-    ov — только если нет ни CUDA, ни AMD (порядок цепочки см. resolve_runtime)."""
+    ov — только если нет ни CUDA, ни AMD (порядок цепочки см. resolve_runtime).
+    Типы карты (cuda_types_probe) спрашиваются и при явном device='cuda' —
+    compute='auto' должен работать на любой карте, не только в auto-режиме.
+    VRAM (cuda_vram_probe, подпроцесс nvidia-smi) — только когда карта
+    fp32-only и compute авто: лишь тогда ярус turbo/small её читает."""
     if cfg.device == "api":
         return ApiBackend(cfg)
     cuda = (cuda_probe or _cuda_available)() if cfg.device == "auto" else False
+    cuda_types = ((cuda_types_probe or _cuda_compute_types)()
+                  if (cuda or cfg.device == "cuda") else None)
+    comp_auto = cfg.compute_type in ("", "auto", None)
+    cuda_vram = ((cuda_vram_probe or _cuda_vram_mb)()
+                 if (comp_auto and cuda_types is not None
+                     and _pick_cuda_compute(cuda_types) == "float32") else None)
     amd = ((amd_probe or _amd_gpu_available)()
            if (cfg.device == "auto" and not cuda) else False)
     ov = ((ov_probe or _ov_gpu_available)()
           if (cfg.device == "auto" and not cuda and not amd) else False)
     dev, comp, mdl = resolve_runtime(cfg.device, cfg.compute_type, cfg.model,
                                      cuda_available=cuda, ov_gpu_available=ov,
-                                     amd_available=amd)
+                                     amd_available=amd,
+                                     cuda_compute_types=cuda_types,
+                                     cuda_vram_mb=cuda_vram)
     if dev == "amd":
         if mdl != cfg.model:
             print(f"[backends] у модели {cfg.model!r} нет ggml-кванта — "
