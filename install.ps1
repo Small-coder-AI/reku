@@ -150,12 +150,24 @@ $codeItems = @("reku", "scripts", "packaging", "requirements.txt", "requirements
 if ($SourcePath) {
     foreach ($it in $codeItems) { Copy-Item -Recurse -Force (Join-Path $SourcePath $it) $InstallDir }
 } else {
-    $tmp = Join-Path $env:TEMP "reku_dl"; Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    # НЕ %TEMP%: у профилей с не-ASCII именем (C:\Users\Иван) elevated-запуск
+    # PowerShell получает TEMP коротким DOS-путём (C:\Users\ABCD~1\...), и
+    # Windows PowerShell 5.1 спотыкается на «~» при разрешении пути — установка
+    # валилась прямо здесь, SilentlyContinue не спасал (боевой случай 2026-07-26).
+    # LOCALAPPDATA шелл всегда отдаёт длинным — строим времянку от него.
+    $tmpParent = Join-Path $env:LOCALAPPDATA "Temp"
+    New-Item -ItemType Directory -Force -Path $tmpParent | Out-Null
+    $tmp = Join-Path $tmpParent "reku_dl"
+    foreach ($p in @($tmp, "$tmp.zip")) {
+        if (Test-Path -LiteralPath $p -ErrorAction SilentlyContinue) {
+            Remove-Item -Recurse -Force -LiteralPath $p
+        }
+    }
     Invoke-WebRequest $RepoZip -OutFile "$tmp.zip"
     Expand-Archive "$tmp.zip" $tmp -Force
     $src = Get-ChildItem $tmp -Directory | Select-Object -First 1   # reku-main/
     foreach ($it in $codeItems) { Copy-Item -Recurse -Force (Join-Path $src.FullName $it) $InstallDir }
-    Remove-Item -Recurse -Force $tmp, "$tmp.zip" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force -LiteralPath $tmp, "$tmp.zip" -ErrorAction SilentlyContinue
 }
 
 # ── 4. Окружение ─────────────────────────────────────────────
