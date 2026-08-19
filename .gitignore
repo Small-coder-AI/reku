@@ -43,3 +43,6 @@ docs-archive/
 # IDE
 .vscode/
 .idea/
+
+# Путь к памяти абсолютный и на каждой машине свой — файл локальный
+.claude/settings.local.json
