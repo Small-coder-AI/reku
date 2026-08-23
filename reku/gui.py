@@ -245,7 +245,7 @@ class MainWindow(QWidget):
 
         gear = QPushButton("⚙"); gear.setObjectName("IconBtn")
         gear.setFixedSize(40, 38); gear.setCursor(Qt.PointingHandCursor)
-        gear.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        gear.clicked.connect(self._open_settings)
         bottom.addWidget(gear)
         lay.addLayout(bottom)
         return page
@@ -319,6 +319,16 @@ class MainWindow(QWidget):
             "термины через запятую или с новой строки\n(например: GitHub, Docker, PostgreSQL…)")
         self.vocab_edit.setFixedHeight(76)
         lay.addWidget(self.vocab_edit)
+
+        prompt_lbl = QLabel("Промпт декодеру"); prompt_lbl.setObjectName("RowLabel")
+        lay.addWidget(prompt_lbl)
+        self.prompt_edit = QPlainTextEdit()
+        self.prompt_edit.setPlainText(self.cfg.initial_prompt)
+        self.prompt_edit.setPlaceholderText(
+            "подсказка о стиле/языках диктовки (initial_prompt);\n"
+            "влияет на пунктуацию и написание терминов")
+        self.prompt_edit.setFixedHeight(76)
+        lay.addWidget(self.prompt_edit)
 
         secS = QLabel("СИСТЕМА"); secS.setObjectName("SectionLabel"); lay.addWidget(secS)
         self.autostart_chk = QCheckBox("Запускать при старте Windows")
@@ -404,6 +414,7 @@ class MainWindow(QWidget):
             self._tray_refresh(self._state)
 
     def _theme_changed(self):
+        self._sync_cfg_from_disk()   # сохраняем весь конфиг — не затереть правки файла
         self.cfg.theme = self.theme_combo.currentData()
         from reku import config as _cfg; _cfg.save(self.cfg)
         self.apply_theme()
@@ -482,14 +493,46 @@ class MainWindow(QWidget):
             threading.Thread(target=self.engine.start_rec, daemon=True).start()
 
     def _lang_changed(self):
+        self._sync_cfg_from_disk()   # сохраняем весь конфиг — не затереть правки файла
         self.cfg.language = self.lang_combo.currentData()
         from reku import config as _cfg; _cfg.save(self.cfg)
         if self.engine:
             self.engine.apply_config()
         self._update_hint()
 
+    def _sync_cfg_from_disk(self):
+        """Перечитать config.json в self.cfg (сам объект сохраняем — на него держат
+        ссылки движок и страницы UI). Без этого сохранение настроек из UI писало
+        на диск конфиг из памяти целиком и молча затирало внешние правки файла
+        (в т.ч. полей, которых в UI нет)."""
+        from dataclasses import fields
+        from reku import config as _cfg
+        fresh = _cfg.load()
+        for f in fields(fresh):
+            setattr(self.cfg, f.name, getattr(fresh, f.name))
+
+    def _open_settings(self):
+        """Показать настройки, освежив виджеты из config.json: файл могли править
+        руками, пока приложение работало, — иначе «Применить» вернёт старые значения."""
+        self._sync_cfg_from_disk()
+        c = self.cfg
+        self._select_text(self.model_combo, c.model)
+        self._select_data(self.device_combo, c.device)
+        self._select_text(self.compute_combo, c.compute_type)
+        self._select_data(self.hotkey_combo, c.hotkey)
+        (self.tog_radio if c.mode == "toggle" else self.ptt_radio).setChecked(True)
+        self.theme_combo.blockSignals(True)      # не дёргать _theme_changed зря
+        self._select_data(self.theme_combo, c.theme)
+        self.theme_combo.blockSignals(False)
+        self.vad_chk.setChecked(c.vad_filter)
+        self.halluc_chk.setChecked(c.drop_hallucinations)
+        self.vocab_edit.setPlainText(c.hotwords)
+        self.prompt_edit.setPlainText(c.initial_prompt)
+        self.stack.setCurrentIndex(1)
+
     def _apply_settings(self):
         from reku import config as _cfg
+        self._sync_cfg_from_disk()   # не затирать внешние правки полей вне UI
         c = self.cfg
         old = (c.model, c.device, c.compute_type)
         c.model = self.model_combo.currentText()
@@ -502,6 +545,7 @@ class MainWindow(QWidget):
         # многострочный ввод -> чистый список «через запятую» (по строкам и запятым)
         c.hotwords = ", ".join(s.strip() for s in self.vocab_edit.toPlainText().splitlines()
                                if s.strip())
+        c.initial_prompt = self.prompt_edit.toPlainText().strip()
         _cfg.save(c)
         if self.engine:
             self.engine.apply_config()
