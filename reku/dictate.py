@@ -33,6 +33,12 @@ from reku import postprocess
 # единый текст предупреждения (старт приложения и путь ошибки записи)
 MIC_NOT_FOUND_MSG = "Микрофон не найден — подключи микрофон и нажми запись"
 
+# Разгон потока: паузы в поступлении звука, начавшиеся в первые STREAM_WARMUP_S
+# после первого блока, обрывом не считаем — это старт устройства (Bluetooth-гарнитура
+# переключает профиль на Hands-Free), а не пропажа микрофона посреди фразы.
+# Сам порог обрыва — config.max_audio_gap_s.
+STREAM_WARMUP_S = 0.5
+
 
 def mic_available() -> bool:
     """Есть ли в системе устройство записи. PortAudio снимает список устройств ОДИН
@@ -84,6 +90,12 @@ class DictationApp:
         self._key_held = False          # для toggle: реагировать раз на физическое нажатие
         self._frames = []
         self._stream = None
+        # учёт поступления звука в текущей записи (монотонное время, c) — по нему
+        # видно, что устройство замолкало посреди фразы (см. _audio_gap_s)
+        self._first_cb_t = None
+        self._last_cb_t = None
+        self._last_block_s = 0.0
+        self._max_gap_s = 0.0
         self._lock = threading.Lock()
         self._listener = None
 
@@ -181,9 +193,22 @@ class DictationApp:
                 return
             self._recording = True
             self._frames = []
+            self._first_cb_t = self._last_cb_t = None
+            self._last_block_s = self._max_gap_s = 0.0
+
+        sr = self.cfg.sample_rate
 
         def cb(indata, n, t, status):
             if self._recording:
+                now = time.monotonic()
+                last = self._last_cb_t
+                if last is None:
+                    self._first_cb_t = now
+                elif last - self._first_cb_t >= STREAM_WARMUP_S:
+                    # интервал между блоками сверх длины самого блока — звук не приходил
+                    self._max_gap_s = max(self._max_gap_s, now - last - n / sr)
+                self._last_cb_t = now
+                self._last_block_s = n / sr
                 self._frames.append(indata.copy())
                 rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
                 self.on_level(rms)
@@ -233,6 +258,8 @@ class DictationApp:
                 return
             self._recording = False
             self._transcribing = True
+        gap_s = self._audio_gap_s(time.monotonic())
+        held_back = False
         try:
             if self._stream is not None:
                 self._stream.stop()
@@ -243,14 +270,49 @@ class DictationApp:
             audio = np.concatenate(self._frames, axis=0).flatten()
             self._set_state("transcribing")
             text = self.transcribe(audio)
-            if text:
+            limit = self.cfg.max_audio_gap_s
+            if limit and gap_s > limit:
+                held_back = True
+                self._hold_back(text, gap_s)
+            elif text:
                 self.insert(text)
                 self.on_result(text)
             else:
                 print("(пусто)\n", flush=True)
         finally:
             self._transcribing = False
-            self._set_state("idle")
+            self._set_state("error" if held_back else "idle")
+
+    def _audio_gap_s(self, now: float) -> float:
+        """Самая длинная пауза в поступлении звука за текущую запись, c (сверх длины
+        блока). Учитывает и хвост: звук перестал приходить и до отпускания клавиши
+        так и не вернулся. Когда устройство пропадает (Bluetooth-гарнитура на 0.5–2 c),
+        sounddevice молчит — stop()/close() глотают ошибки хоста, — поэтому обрыв
+        виден только по времени между блоками."""
+        last, first = self._last_cb_t, self._first_cb_t
+        if last is None or last - first < STREAM_WARMUP_S:
+            return self._max_gap_s
+        return max(self._max_gap_s, now - last - self._last_block_s)
+
+    def _hold_back(self, text: str, gap_s: float):
+        """Запись прерывалась: распознанный обрывок в окно не вставляем — там он
+        выглядит как несвязный текст. Кладём его в буфер обмена (вставить руками,
+        если годится) и показываем причину через состояние 'error'."""
+        copied = False
+        if text:
+            try:
+                pyperclip.copy(text)
+                copied = True
+            except Exception as e:
+                print(f"[hold_back] буфер обмена недоступен: {e}", file=sys.stderr)
+        if copied:
+            outcome = "текст не вставлен, он в буфере обмена (Ctrl+V)"
+        elif text:
+            outcome = "текст не вставлен"
+        else:
+            outcome = "распознать нечего"
+        self._last_error = f"Звук с микрофона прерывался ({gap_s:.1f} c) — {outcome}"
+        print(f"[rec] {self._last_error}\n", flush=True)
 
     # ── распознавание + фильтр ───────────────────────────────
     def transcribe(self, audio: np.ndarray) -> str:
@@ -272,7 +334,11 @@ class DictationApp:
         text = postprocess.join_text(texts)
         dt = time.perf_counter() - t0
         p_str = f"{lp:.2f}" if lp is not None else "—"
-        print(f"[{dt:.2f}s, lang={info.language} p={p_str}]", flush=True)
+        # время суток и длина звука — чтобы сопоставлять диктовку с событиями системы
+        # (журнал Windows Audio: пропажи микрофона); текст в лог не пишем
+        audio_s = len(audio) / c.sample_rate
+        print(f"[{time.strftime('%H:%M:%S')} звук {audio_s:.1f}s → {dt:.2f}s, "
+              f"lang={info.language} p={p_str}]", flush=True)
         return text
 
     # ── вставка в активное окно ──────────────────────────────

@@ -119,6 +119,7 @@ Created on first launch. The essentials:
 | `drop_hallucinations` | `true` | drops Whisper's trademark phantom captions (blocklist in postprocess.py) |
 | `min_language_probability` | `0.0` | `>0` (e.g. 0.4) — mute output when language detection is uncertain (likely not speech) |
 | `insert_method` | `paste` | `paste` (clipboard + Ctrl+V) or `type` (character by character) |
+| `max_audio_gap_s` | `0.5` | if the microphone stops delivering audio mid-recording for longer than this (typical for Bluetooth headsets), the partial text is **not** pasted: it goes to the clipboard and the window shows a warning; `0` = always paste |
 
 The defaults are tuned for **Russian** dictation. For another language, set `language`
 accordingly (or `""` for auto-detect) and adapt `initial_prompt` to that language.
