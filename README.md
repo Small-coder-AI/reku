@@ -87,16 +87,17 @@ Update later with `uv tool upgrade reku`.
 .venv\Scripts\python.exe -m reku       # GUI (with a console for logs/latency)
 ```
 
-The window: dark borderless, mic orb (status by color), live waveform while recording,
-a card with the recognized text, a record button, a language picker, gear → settings
-(model/device/precision/hotkey/mode/VAD/filter). Closing the window minimizes to tray;
-quit from the tray menu.
+The window: borderless (dark or light theme), mic orb (status by color), live waveform
+while recording, a record button, a language picker, gear → settings
+(model/device/precision/hotkey/mode/theme/VAD/filter/term dictionary/prompt). Closing the
+window minimizes to tray; quit from the tray menu.
 
 Wait for **Ready…** (the model takes ~6 s to load), then hold the hotkey (right Ctrl by
 default), speak, release. The text is pasted at the cursor. **Keep a single instance
 running** — each one loads its own copy of the model into VRAM.
 
-The tray menu switches mode and language on the fly (writes to `config.json`).
+The language is switched right in the window, the mode and everything else in settings;
+changes are saved to `config.json`.
 
 ## Settings — config.json
 
