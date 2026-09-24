@@ -216,7 +216,7 @@ ok &= check("OV.transcribe: info.language_probability=1.0",
             _info2.language_probability == 1.0 and _info2.duration == 1.0)
 
 
-# ── OV: hotwords и ov_num_beams — опциональные kwargs generate() ──
+# ── OV: hotwords — опциональный kwarg generate(), num_beams — никогда ──
 class _CapturingPipe:
     def __init__(self):
         self.calls = []
@@ -245,14 +245,9 @@ ok &= check("OV: пустой hotwords не передаётся", "hotwords" no
 ok &= check("OV: конфиг без атрибута hotwords не роняет transcribe (getattr-фолбэк)",
             "hotwords" not in _ov_kwargs())
 
-ok &= check("OV: ov_num_beams=1 (дефолт) -> num_beams не передан (greedy)",
-            "num_beams" not in _ov_kwargs(ov_num_beams=1))
-ok &= check("OV: ov_num_beams=5 -> num_beams=5 передан",
-            _ov_kwargs(ov_num_beams=5).get("num_beams") == 5)
-ok &= check("OV: конфиг без атрибута ov_num_beams -> greedy по умолчанию",
-            "num_beams" not in _ov_kwargs())
-ok &= check("OV: большой beam_size (CT2-поле) НЕ подменяет num_beams",
-            "num_beams" not in _ov_kwargs(beam_size=10, ov_num_beams=1))
+# beam search на GPU в openvino-genai 2026.2.1 падает — num_beams не передаётся никогда
+ok &= check("OV: num_beams не передаётся даже при большом beam_size (greedy)",
+            "num_beams" not in _ov_kwargs(beam_size=10))
 
 # ── apply_vad: тишина -> None (реальный Silero из faster-whisper) ──
 from reku.backends import apply_vad

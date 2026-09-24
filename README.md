@@ -118,7 +118,6 @@ Created on first launch. The essentials:
 | `initial_prompt` | Russian anchor | biases the decoder towards Cyrillic; keep it Russian, put terms into `hotwords` |
 | `hotwords` | empty | your brands/terms, comma-separated (e.g. `GitHub, Docker, 1С`) — targeted bias |
 | `beam_size` | `5` | `1` is faster, `5` is more accurate (CUDA/CPU and AMD paths) |
-| `ov_num_beams` | `1` | Intel (OpenVINO) path: `1` = greedy, `>1` = beam search (more accurate, slower on an iGPU) |
 | `vad_filter` | `true` | cuts silence/noise — the **main** hallucination guard |
 | `condition_on_previous_text` | `false` | `false` = fewer repetition loops |
 | `no_repeat_ngram_size` | `0` | `0` = off: the n-gram ban cannot tell a loop from a legitimately repeated word and mangles the 2nd/3rd occurrence; loops are already covered by the layers above |
@@ -189,10 +188,9 @@ ready-made int8 models are downloaded from HF (`OpenVINO/whisper-*-int8-ov`, the
 (tens of seconds, one-off), after that — cache in `ov_cache/` and a ~2–3 s start.
 VAD works (Silero from faster-whisper), the hallucination filters work;
 `hotwords` (the custom vocabulary) work as well; `min_language_probability` has NO effect
-on this path (the engine does not report language confidence). Decoding is greedy by
-default (`beam_size` applies to the CUDA/CPU path only); beam search can be enabled with
-`ov_num_beams` in config.json — more accurate but slower on an iGPU, benchmark it on your
-machine first. Speed verified on Arc 140T; on weak iGPUs
+on this path (the engine does not report language confidence). Decoding is always greedy:
+`beam_size` does not apply here, and beam search in OpenVINO GenAI 2026.2 fails on the GPU.
+Speed verified on Arc 140T; on weak iGPUs
 (UHD 6xx and the like) large-v3 may compile/run slowly — pick `large-v3-turbo` or
 `small` in settings. If OpenVINO fails to start in auto mode at all (driver/memory),
 the app falls back to CPU + small. On machines without NVIDIA you may skip the
