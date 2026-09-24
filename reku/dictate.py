@@ -17,6 +17,7 @@ from reku import cuda_setup  # noqa: F401 — кладёт nvidia DLL в PATH, �
 
 import time
 import threading
+import queue
 
 import numpy as np
 import sounddevice as sd
@@ -68,6 +69,15 @@ def parse_hotkey(name: str):
                      f"(ожидается имя Key.<...> или один символ)")
 
 
+# Команды рабочего потока хоткея (см. DictationApp._worker_loop). Сравниваются по
+# identity (object()), а не по значению — строки-команды тут не нужны.
+_CMD_START = object()
+_CMD_STOP = object()
+_CMD_TOGGLE = object()
+_CMD_LOAD = object()
+_CMD_QUIT = object()
+
+
 class DictationApp:
     """Ядро: запись -> распознавание -> вставка. UI (консоль/трей) цепляется
     через колбэки on_state(state) и on_result(text)."""
@@ -87,7 +97,7 @@ class DictationApp:
 
         self._recording = False
         self._transcribing = False
-        self._key_held = False          # для toggle: реагировать раз на физическое нажатие
+        self._key_held = False          # дедуп авто-повтора ОС при удержании — общий для ptt и toggle
         self._frames = []
         self._stream = None
         # учёт поступления звука в текущей записи (монотонное время, c) — по нему
@@ -98,6 +108,9 @@ class DictationApp:
         self._max_gap_s = 0.0
         self._lock = threading.Lock()
         self._listener = None
+        self._worker = None
+        self._loading = False            # True, пока в рабочем потоке идёт (пере)загрузка модели
+        self._cmd_queue = queue.Queue()  # команды хоткея -> рабочий поток (см. _worker_loop)
 
         self.on_state = on_state or self._print_state
         self.on_result = on_result or (lambda text: print(f"→ {text}\n", flush=True))
@@ -217,7 +230,9 @@ class DictationApp:
         # откатываем флаг, иначе _recording залипнет True и запись больше не запустится
         try:
             self._stream = self._open_stream(cb)
-        except Exception as e:
+        # e переприсваивается ниже (except Exception as e2: e = e2) и читается в
+        # _last_error/print дальше по коду — ruff не видит эту связь, отсюда noqa
+        except Exception as e:  # noqa: F841
             self._stream = None
             # mic_available() переинициализирует PortAudio: микрофон, подключённый
             # после старта приложения, только так и становится видим — если он
@@ -381,42 +396,141 @@ class DictationApp:
         return getattr(key, "char", None) == getattr(self.hotkey, "char", object())
 
     def _on_press(self, key):
+        """Колбэк pynput на потоке низкоуровневого хука клавиатуры (WH_KEYBOARD_LL
+        на Windows): здесь нельзя ничего мало-мальски долгого (I/O, PortAudio,
+        ожидание лока, занятого надолго) — если хук провисит дольше
+        LowLevelHooksTimeout, Windows молча его снимет, и хоткей умрёт до
+        перезапуска. Только ставим команду в очередь, исполняет её рабочий поток
+        (_worker_loop)."""
         if not self._matches(key):
             return
+        if self._key_held:            # авто-повтор ОС при удержании — не дублируем команду
+            return
+        self._key_held = True
         if self.cfg.mode == "toggle":
-            if self._key_held:           # подавляем авто-повтор удержания
-                return
-            self._key_held = True
-            if self._recording:
-                threading.Thread(target=self.stop_and_transcribe, daemon=True).start()
-            else:
-                self.start_rec()
+            self._request_start_like(_CMD_TOGGLE)
         else:  # ptt
-            self.start_rec()
+            self.request_start()
 
     def _on_release(self, key):
+        """Тот же поток хука и те же ограничения, что у _on_press."""
         if not self._matches(key):
             return
-        if self.cfg.mode == "toggle":
-            self._key_held = False
-        else:  # ptt
-            threading.Thread(target=self.stop_and_transcribe, daemon=True).start()
+        self._key_held = False
+        if self.cfg.mode == "ptt":
+            self.request_stop()
+        # toggle реагирует только на нажатие — отпускание ничего не ставит в очередь
 
-    def start(self):
-        """Грузит модель (если ещё нет) и запускает слушатель клавиш. Не блокирует."""
-        # проверяем микрофон сразу, не дожидаясь загрузки/скачивания модели (минуты):
-        # раньше его отсутствие всплывало только при попытке записи невнятным
-        # «Unanticipated host error [PaErrorCode -9999]»
+    # ── очередь команд хоткея: потокобезопасно, неблокирующе ────
+    def _enqueue(self, cmd):
+        self._cmd_queue.put(cmd)
+
+    def _request_start_like(self, cmd):
+        """Общая точка для request_start() и toggle-нажатия: запрос во время
+        распознавания не откладываем на потом — иначе команда осядет в очереди
+        и выполнится уже ПОСЛЕ того, как распознавание закончится само по себе,
+        незаметно для пользователя запустив новую запись."""
+        if self._transcribing:
+            return
+        self._enqueue(cmd)
+
+    def request_start(self):
+        """«Начать запись»: потокобезопасно, неблокирующе, можно звать из любого
+        потока (в т.ч. из хука клавиатуры). Если модель не загружена и загрузка
+        сейчас не идёт — вместо записи запускает повторную попытку загрузки;
+        если загрузка уже идёт — запрос игнорируется."""
+        self._request_start_like(_CMD_START)
+
+    def request_stop(self):
+        """«Стоп и распознать»: потокобезопасно, неблокирующе. stop_and_transcribe()
+        сам ничего не делает, если запись не идёт, — доп. проверка тут не нужна."""
+        self._enqueue(_CMD_STOP)
+
+    def request_load(self):
+        """Повторить загрузку модели (после сбоя, или по внешнему запросу) —
+        потокобезопасно, неблокирующе. Если загрузка уже идёт или модель уже
+        загружена, рабочий поток команду тихо пропустит (см. _exec_retry_load)."""
+        self._enqueue(_CMD_LOAD)
+
+    @property
+    def loading(self) -> bool:
+        """True, пока в рабочем потоке идёт (пере)загрузка модели."""
+        return self._loading
+
+    # ── рабочий поток: выполняет команды хоткея по очереди, последовательно ─
+    def _exec_start(self):
+        if self.backend is None:
+            self._exec_retry_load()
+        else:
+            self.start_rec()
+
+    def _exec_toggle(self):
+        """Решение старт/стоп принимается здесь, в рабочем потоке, по свежему
+        self._recording, а не в потоке хука в момент нажатия — там оно могло
+        устареть, пока команда стояла в очереди."""
+        if self._recording:
+            self.stop_and_transcribe()
+        else:
+            self._exec_start()
+
+    def _exec_retry_load(self):
+        """(Пере)загрузка модели в рабочем потоке: самая первая загрузка при
+        старте и повтор по хоткею/request_load() после сбоя. Флаг _loading общий
+        с reload_model() — не грузим модель второй раз поверх уже идущей загрузки
+        (например хоткей во время смены модели в настройках)."""
+        with self._lock:
+            if self.backend is not None or self._loading:
+                return
+            self._loading = True
+        try:
+            self.load_model()
+        except Exception:
+            pass          # load_model() уже отразил сбой в _last_error и состоянии 'error'
+        finally:
+            self._loading = False
+
+    def _dispatch(self, cmd):
+        if cmd is _CMD_START:
+            self._exec_start()
+        elif cmd is _CMD_STOP:
+            self.stop_and_transcribe()
+        elif cmd is _CMD_TOGGLE:
+            self._exec_toggle()
+        elif cmd is _CMD_LOAD:
+            self._exec_retry_load()
+
+    def _worker_loop(self):
+        # Проверка микрофона и первая загрузка модели — здесь, а не в start():
+        # слушатель клавиш должен встать независимо от их результата, иначе
+        # хоткей молчит до перезапуска после любого сбоя первой загрузки.
         mic_ok = mic_available()
         if not mic_ok:
             self._last_error = MIC_NOT_FOUND_MSG
             print("[start] микрофон не найден", file=sys.stderr, flush=True)
             self._set_state("error")
-        if self.backend is None:
+        self._exec_retry_load()
+        if not mic_ok and not mic_available():
+            # статусы загрузки модели успели перекрыть раннее предупреждение —
+            # возвращаем его, если микрофон так и не появился
+            self._last_error = MIC_NOT_FOUND_MSG
+            self._set_state("error")
+        while True:
+            cmd = self._cmd_queue.get()
+            if cmd is _CMD_QUIT:
+                break
             try:
-                self.load_model()
-            except Exception:
-                return        # состояние уже 'error'; слушатель не запускаем (нечем распознавать)
+                self._dispatch(cmd)
+            except Exception as e:
+                # команда не должна убивать рабочий поток — иначе хоткей опять
+                # «умирает» до перезапуска, ровно то, что чинит этот файл
+                print(f"[worker] {type(e).__name__}: {e}", file=sys.stderr)
+
+    def start(self):
+        """Запускает рабочий поток и слушатель клавиш немедленно, не дожидаясь
+        проверки микрофона и загрузки модели — они идут в рабочем потоке
+        (_worker_loop). Не блокирует."""
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
         mode_hint = ("нажми хоткей — старт, нажми снова — стоп"
                      if self.cfg.mode == "toggle" else "держи хоткей и говори")
         print(f"Готово. Режим: {self.cfg.mode} ({self.cfg.hotkey}). "
@@ -424,11 +538,6 @@ class DictationApp:
         self._listener = keyboard.Listener(on_press=self._on_press,
                                             on_release=self._on_release)
         self._listener.start()
-        if not mic_ok and not mic_available():
-            # статусы загрузки модели успели перекрыть раннее предупреждение —
-            # возвращаем его, если микрофон так и не появился
-            self._last_error = MIC_NOT_FOUND_MSG
-            self._set_state("error")
 
     def run(self):
         """Консольный запуск: стартует и блокируется до выхода."""
@@ -436,8 +545,10 @@ class DictationApp:
         self._listener.join()
 
     def stop(self):
+        """Останавливает слушатель клавиш и рабочий поток. Идемпотентен."""
         if self._listener is not None:
             self._listener.stop()
+        self._enqueue(_CMD_QUIT)
 
     def apply_config(self):
         """Перечитать настройки, влияющие на live-поведение (хоткей). Режим/язык
@@ -453,7 +564,11 @@ class DictationApp:
             if self._recording or self._transcribing:
                 return False
             self.backend = None
-        self.load_model()
+            self._loading = True         # см. _exec_retry_load: не грузить поверх этого
+        try:
+            self.load_model()
+        finally:
+            self._loading = False
         return True
 
 
