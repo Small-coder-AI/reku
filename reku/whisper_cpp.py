@@ -218,6 +218,15 @@ def display_adapter_names() -> list[str]:
 
 # ── серверный процесс ────────────────────────────────────────────
 
+# urlopen() по умолчанию уважает HTTP_PROXY/HTTPS_PROXY и, на Windows, системный
+# прокси из реестра; 127.0.0.1 не всегда попадает в его исключения (NO_PROXY),
+# и локальный запрос к своему же whisper-server может уйти в прокси пользователя.
+# /health и /inference всегда идут на 127.0.0.1 (наш подпроцесс) — прокси там не
+# нужен в принципе. _download() (докачка движка с GitHub) НЕ переведён на этот
+# opener — ей прокси должен продолжать работать (пользователи за корпоративным).
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -339,7 +348,7 @@ class ServerProcess:
                     f"whisper-server завершился при старте (код {code}); "
                     f"лог: {self.log_path}")
             try:
-                with urllib.request.urlopen(url, timeout=2) as r:
+                with _LOCAL_OPENER.open(url, timeout=2) as r:
                     if r.status == 200:
                         return
             except (urllib.error.URLError, OSError):
@@ -361,7 +370,7 @@ class ServerProcess:
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/inference",
             data=body, headers={"Content-Type": ctype})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _LOCAL_OPENER.open(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
 
     def vulkan_devices(self):

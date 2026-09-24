@@ -215,6 +215,45 @@ ok &= check("OV.transcribe: сегменты через адаптер",
 ok &= check("OV.transcribe: info.language_probability=1.0",
             _info2.language_probability == 1.0 and _info2.duration == 1.0)
 
+
+# ── OV: hotwords и ov_num_beams — опциональные kwargs generate() ──
+class _CapturingPipe:
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, samples, **kw):
+        self.calls.append(kw)
+        return S(chunks=[S(text="тест", start_ts=0.0, end_ts=1.0)])
+
+
+_ovb_hw = OpenVINOBackend(model="large-v3", device="igpu")
+_ovb_hw._pipe = _CapturingPipe()
+
+
+def _ov_kwargs(**cfg_extra):
+    base = dict(language="ru", vad_filter=False, initial_prompt="", beam_size=5,
+                condition_on_previous_text=False, no_repeat_ngram_size=0)
+    base.update(cfg_extra)
+    _ovb_hw.transcribe(np.zeros(16000, dtype=np.float32), S(**base))
+    return _ovb_hw._pipe.calls[-1]
+
+
+ok &= check("OV: непустой hotwords пробрасывается в generate()",
+            _ov_kwargs(hotwords="PostgreSQL, Redis").get("hotwords")
+            == "PostgreSQL, Redis")
+ok &= check("OV: пустой hotwords не передаётся", "hotwords" not in _ov_kwargs(hotwords=""))
+ok &= check("OV: конфиг без атрибута hotwords не роняет transcribe (getattr-фолбэк)",
+            "hotwords" not in _ov_kwargs())
+
+ok &= check("OV: ov_num_beams=1 (дефолт) -> num_beams не передан (greedy)",
+            "num_beams" not in _ov_kwargs(ov_num_beams=1))
+ok &= check("OV: ov_num_beams=5 -> num_beams=5 передан",
+            _ov_kwargs(ov_num_beams=5).get("num_beams") == 5)
+ok &= check("OV: конфиг без атрибута ov_num_beams -> greedy по умолчанию",
+            "num_beams" not in _ov_kwargs())
+ok &= check("OV: большой beam_size (CT2-поле) НЕ подменяет num_beams",
+            "num_beams" not in _ov_kwargs(beam_size=10, ov_num_beams=1))
+
 # ── apply_vad: тишина -> None (реальный Silero из faster-whisper) ──
 from reku.backends import apply_vad
 
