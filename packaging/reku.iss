@@ -57,8 +57,9 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: deskto
 
 [Registry]
 ; автозапуск на УСТАНОВЛЕННЫЙ exe (перекрывает прежнюю portable-запись); чистится при удалении
+; --minimized — старт сразу в трей, без показа окна (см. reku/gui.py)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
-    ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExe}"""; \
+    ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExe}"" --minimized"; \
     Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
