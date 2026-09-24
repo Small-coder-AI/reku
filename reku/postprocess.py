@@ -4,7 +4,8 @@
   1. VAD (в transcribe) — режет не-речь в ноль. Главная защита, не здесь.
   2. Декодер: condition_on_previous_text=False + temperature fallback самого
      faster-whisper (перекодирует окно при compression_ratio > 2.4) — меньше петель.
-  3. Здесь: блок-лист фирменных фантомов + дедуп повторов + порог compression_ratio.
+  3. Здесь: блок-лист фирменных фантомов, срез подписей титровальщиков в хвосте,
+     дедуп повторов, порог compression_ratio.
   4. Опционально (в вызывающем коде): порог info.language_probability.
 """
 import re
@@ -31,6 +32,54 @@ HALLUCINATION_PHRASES = {
 
 _punct_re = re.compile(r"[^\w\s]", re.UNICODE)
 _space_re = re.compile(r"\s+")
+
+# Подписи титровальщиков: Whisper выучил их на YouTube-субтитрах и дописывает на
+# тишине в конце записи — «…и всё. Субтитры создавал <ник>». Точное совпадение фразы
+# их не ловит (после подписи идёт ник, перед ней — реальная речь), поэтому режем
+# хвостом: от подписи до конца текста. Подпись — ключевые слова, а за ними ТОЛЬКО
+# имена в титровом виде: ник латиницей или инициалы с фамилией. «Субтитры сделали
+# отвратительно» и «субтитры сделай крупнее» — речь, их не трогаем.
+_LATIN = r"[A-Za-z][\w.\-]*"                    # ник или сайт: NickName, Amara.org
+_INITIALS = r"[А-ЯЁA-Z]\.\s?[А-ЯЁA-Z][\w\-]*"    # А.Иванов, A. Smith
+_NAME = rf"(?:{_INITIALS}|{_LATIN})"
+_NAMES = rf"{_NAME}(?:[\s,]+{_NAME}){{0,3}}"
+_VERB = (r"(?:создавал|создала|создали|сделал|сделала|сделали|сделаны|делал|делала"
+         r"|делали|подготовил|подготовила|подготовили|подготовлены|предоставил"
+         r"|предоставила|предоставлены|редактировал|редактировала|перевёл|перевел|перевела)")
+# ключевые слова без учёта регистра, имена — с учётом (заглавная — признак имени)
+_CREDIT_RE = re.compile(
+    r"(?:"
+    rf"(?i:субтитр\w*)(?:\s*:|\s+(?i:{_VERB})(?:\s+(?i:сообществом))?)\s+{_NAMES}"
+    rf"|(?i:редактор\s+субтитров)\s+{_INITIALS}(?:\s+(?i:корректор)\s+{_INITIALS})?"
+    rf"|(?i:корректор)\s+{_INITIALS}"
+    rf"|(?i:subtitles\s+by)\s+(?:(?i:the)\s+)?{_NAMES}(?:\s+(?i:community))?"
+    r"|(?i:amara\.org)"
+    r")[\s.!…]*")
+_CREDIT_START = re.compile(r"(?i)(?<!\w)(?:субтитр|редактор|корректор|subtitles|amara\.org)")
+
+
+def _credit_tail_start(text: str):
+    """Позиция, с которой начинается хвост-подпись, или None."""
+    for m in _CREDIT_START.finditer(text):
+        i = m.start()
+        if not _CREDIT_RE.fullmatch(text, i):
+            continue
+        before = text[:i].rstrip()
+        # подпись — отдельное «предложение»: начало текста или после .!?…; без точки —
+        # только если Whisper начал её с заглавной («…сделал Субтитры создавал …»).
+        # Голый сайт посреди фразы («зайди на сайт Amara.org») — речь.
+        if not before or before[-1] in ".!?…»\"":
+            return i
+        if text[i].isupper() and not text[i:].lower().startswith("amara"):
+            return i
+    return None
+
+
+def strip_credit_tail(text: str) -> str:
+    """Срезать с конца текста подписи титровальщиков (их бывает несколько подряд)."""
+    while (i := _credit_tail_start(text)) is not None:
+        text = text[:i].rstrip()
+    return text
 
 
 def normalize(text: str) -> str:
@@ -60,6 +109,8 @@ def clean_segments(
     prev_norm = None
     for s in segments:
         text = (getattr(s, "text", "") or "").strip()
+        if drop_hallucinations:
+            text = strip_credit_tail(text)
         if not text:
             continue
         if drop_hallucinations and is_hallucination_phrase(text):

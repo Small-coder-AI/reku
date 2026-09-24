@@ -90,15 +90,19 @@ Update later with `uv tool upgrade reku`.
 .venv\Scripts\python.exe -m reku       # GUI (with a console for logs/latency)
 ```
 
-The window: borderless (dark or light theme), mic orb (status by color), live waveform
-while recording, a record button, a language picker, gear → settings
-(model/device/precision/hotkey/mode/theme/VAD/filter/term dictionary/prompt). Closing the
+The window: borderless (dark or light theme), resizable by any edge or corner (the size
+is remembered), mic orb (status by color), live waveform while recording, a record button,
+a language picker, gear → settings (model/device/term dictionary, hotkey/mode/recording
+indicator, theme/autostart; precision, VAD, filter and prompt under "Advanced"). Closing the
 window minimizes to tray; quit from the tray menu. With autostart enabled, Reku starts
 straight into the tray (`--minimized`).
 
 Wait for **Ready…** (the model takes ~6 s to load), then hold the hotkey (right Ctrl by
-default), speak, release. The text is pasted at the cursor. **Keep a single instance
-running** — each one loads its own copy of the model into VRAM.
+default), speak, release. The text is pasted at the cursor. While you dictate, a small
+indicator at the bottom of the screen shows "Recording 0:03" with the sound level, then
+"Transcribing…" and the result; it never takes focus from your app and can be turned off in
+settings. **Keep a single instance running** — each one loads its own copy of the model into
+VRAM.
 
 The language is switched right in the window, the mode and everything else in settings;
 changes are saved to `config.json`.
@@ -114,6 +118,7 @@ Created on first launch. The essentials:
 | `hotkey` | `ctrl_r` | pynput key name (`ctrl_r`, `f9`, …) or a single character |
 | `mode` | `ptt` | `ptt` — hold to talk; `toggle` — press to start/stop |
 | `theme` | `system` | `system` (follows Windows) / `dark` / `light` |
+| `show_overlay` | `true` | recording indicator at the bottom of the screen, on top of other windows |
 | `language` | `"ru"` | `"ru"` pins the language (fewer Latin-inside-Cyrillic artifacts); `""` — auto-detect |
 | `initial_prompt` | Russian anchor | biases the decoder towards Cyrillic; keep it Russian, put terms into `hotwords` |
 | `hotwords` | empty | your brands/terms, comma-separated (e.g. `GitHub, Docker, 1С`) — targeted bias |
@@ -121,7 +126,7 @@ Created on first launch. The essentials:
 | `vad_filter` | `true` | cuts silence/noise — the **main** hallucination guard |
 | `condition_on_previous_text` | `false` | `false` = fewer repetition loops |
 | `no_repeat_ngram_size` | `0` | `0` = off: the n-gram ban cannot tell a loop from a legitimately repeated word and mangles the 2nd/3rd occurrence; loops are already covered by the layers above |
-| `drop_hallucinations` | `true` | drops Whisper's trademark phantom captions (blocklist in postprocess.py) |
+| `drop_hallucinations` | `true` | drops Whisper's trademark phantom captions: YouTube outro phrases and subtitle credits it appends at the end ("Субтитры создавал <nickname>"); see postprocess.py |
 | `min_language_probability` | `0.0` | `>0` (e.g. 0.4) — mute output when language detection is uncertain (likely not speech) |
 | `insert_method` | `paste` | `paste` (clipboard + Ctrl+V) or `type` (character by character) |
 | `max_audio_gap_s` | `0.5` | if the microphone stops delivering audio mid-recording for longer than this (typical for Bluetooth headsets), the partial text is **not** pasted: it goes to the clipboard and the window shows a warning; `0` = always paste |
@@ -222,6 +227,7 @@ as well (handy for testing: `"device": "amd"` in config.json).
 
 - `reku/gui.py` — **desktop UI on PySide6** (window + tray). The main entry point.
 - `reku/gui_theme.py` — palette + QSS. `reku/gui_widgets.py` — MicOrb + WaveformStrip.
+- `reku/gui_overlay.py` — the recording indicator; `reku/gui_resize.py` — edge resizing of the borderless window.
 - `reku/dictate.py` — the `DictationApp` core (record → transcribe → insert).
 - `reku/config.py` / `config.json` — settings.
 - `reku/postprocess.py` — hallucination filter (pure functions).

@@ -35,6 +35,12 @@ def _paint_icon(kind, p, s):
         p.drawLine(QPointF(s * 0.28, y), QPointF(s * 0.78, y))
         p.drawPolyline([QPointF(s * 0.50, s * 0.24), QPointF(s * 0.26, y),
                         QPointF(s * 0.50, s * 0.76)])
+    elif kind == "chevron_right":
+        p.drawPolyline([QPointF(s * 0.40, s * 0.26), QPointF(s * 0.64, s * 0.50),
+                        QPointF(s * 0.40, s * 0.74)])
+    elif kind == "chevron_down":
+        p.drawPolyline([QPointF(s * 0.26, s * 0.40), QPointF(s * 0.50, s * 0.64),
+                        QPointF(s * 0.74, s * 0.40)])
     elif kind == "gear":
         cx = cy = s * 0.5
         r_outer = s * 0.28
@@ -54,7 +60,8 @@ def _paint_icon(kind, p, s):
 
 
 def draw_icon(kind: str, color, size: int = 16, dpr: float = 2.0) -> QIcon:
-    """Рисованная (не шрифтовая) line-иконка кнопки: 'close'/'minimize'/'back'/'gear'.
+    """Рисованная (не шрифтовая) line-иконка кнопки: 'close'/'minimize'/'back'/'gear'/
+    'chevron_right'/'chevron_down'.
     color — из активной палитры (обычно text2), чтобы иконка была в тон теме.
     HiDPI: пиксмап физически в dpr раз крупнее, devicePixelRatio проставлен явно —
     иконка остаётся чёткой на масштабированных экранах. Зовём заново в

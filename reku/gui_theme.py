@@ -29,12 +29,14 @@ class Palette:
     ok: str
 
 
-# ── тёмная (исходная cool-dark, синий бренд-акцент) ──────────
+# ── тёмная (графитовая, синий бренд-акцент) ──────────────────
+# Фон — графит, а не почти чёрный: на прежнем #0F1115 окно проваливалось в тёмный
+# рабочий стол, а поля и кнопки сливались с фоном.
 DARK = Palette(
     name="dark",
-    bg_window="#0F1115", bg_card="#171A21", bg_card2="#1E222B", bg_hover="#252A34",
-    border="#2A2F3A", border_soft="#21252E",
-    text="#E8EAED", text2="#9AA0AC", text_dim="#6B7280",
+    bg_window="#1E2129", bg_card="#272B34", bg_card2="#2B303A", bg_hover="#363C48",
+    border="#3C4351", border_soft="#313743",
+    text="#ECEEF2", text2="#AEB5C1", text_dim="#828A99",
     accent="#4C8DFF", accent_hover="#5C9AFF", accent_pressed="#3D7AE6",
     rec="#FF4D5E", rec_hover="#FF6373", busy="#FFB020", ok="#38D39F",
 )
@@ -130,6 +132,14 @@ QWidget {{ color: {p.text}; font-family: 'Segoe UI', sans-serif; font-size: 13px
 #RecordBtn[recording="true"] {{ background: {p.rec}; }}
 #RecordBtn[recording="true"]:hover {{ background: {p.rec_hover}; }}
 #RecordBtn:disabled {{ background: {p.bg_hover}; color: {p.text_dim}; }}
+
+/* подвал настроек: «Применить» вне прокрутки, линия отделяет его от списка */
+#SettingsFooter {{ background: {p.bg_window}; border: none;
+                  border-top: 1px solid {p.border_soft}; }}
+/* кнопка-ссылка «Дополнительно»: текст без рамки, раскрывает блок */
+#LinkBtn {{ background: transparent; border: none; color: {p.text2};
+           font-size: 12px; font-weight: 600; text-align: left; padding: 4px 0; }}
+#LinkBtn:hover {{ color: {p.text}; }}
 
 /* иконочные кнопки (шестерёнка, копировать, назад) */
 #IconBtn {{ background: {p.bg_card2}; border: 1px solid {p.border}; border-radius: 10px;
