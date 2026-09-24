@@ -4,7 +4,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from types import SimpleNamespace as S
-from reku.postprocess import normalize, is_hallucination_phrase, clean_segments, join_text
+from reku.postprocess import (normalize, is_hallucination_phrase, clean_segments, join_text,
+                              strip_credit_tail)
 
 
 def seg(text, cr=1.0):
@@ -62,6 +63,47 @@ ok &= check("clean_segments сохраняет короткое 'you'",
 ok &= check("'спасибо за просмотр' фантом", is_hallucination_phrase("Спасибо за просмотр"))
 ok &= check("'субтитры подготовлены сообществом' фантом",
             is_hallucination_phrase("Субтитры подготовлены сообществом"))
+
+# подписи титровальщиков в хвосте: режутся, даже если после них ник, а перед ними речь
+# (имена и ники здесь вымышленные)
+ok &= check("хвост 'Субтитры создавал <ник>' срезан",
+            strip_credit_tail("Вот так я и сделал. Субтитры создавал NickName")
+            == "Вот так я и сделал.")
+ok &= check("хвост без точки перед подписью (заглавная) срезан",
+            strip_credit_tail("вот так я и сделал Субтитры сделал NickName.")
+            == "вот так я и сделал")
+ok &= check("две подписи подряд срезаны",
+            strip_credit_tail("Готово. Редактор субтитров А.Иванов Корректор Б.Петрова")
+            == "Готово.")
+ok &= check("подпись целиком -> пусто",
+            strip_credit_tail("Субтитры создавал NickName") == "")
+ok &= check("'Субтитры: <ник>' -> пусто", strip_credit_tail("Субтитры: NickName") == "")
+ok &= check("Amara.org срезан",
+            strip_credit_tail("Ну всё. Субтитры подготовлены сообществом Amara.org")
+            == "Ну всё.")
+ok &= check("'предоставлены Amara.org' срезан целиком, без обрубка",
+            strip_credit_tail("Спасибо. Субтитры предоставлены Amara.org") == "Спасибо.")
+ok &= check("сегмент-подпись выкинут целиком",
+            clean_segments([seg("привет мир"), seg("Субтитры создавал NickName")])
+            == ["привет мир"])
+ok &= check("подпись в хвосте сегмента срезана",
+            clean_segments([seg("Пишу письмо. Субтитры делал NickName")]) == ["Пишу письмо."])
+ok &= check("с выключенным фильтром подпись остаётся",
+            clean_segments([seg("Текст. Субтитры создавал NickName")],
+                           drop_hallucinations=False)
+            == ["Текст. Субтитры создавал NickName"])
+# ...а похожая реальная речь — нет
+for speech in (
+    "Субтитры сделай крупнее.",
+    "Субтитры сделали отвратительно.",
+    "Задача закрыта. Субтитры сделал, отправил заказчику.",
+    "Нам нужен редактор субтитров. Редактор субтитров нужен к пятнице.",
+    "я скажу что субтитры создавал вася и это всё",
+    "эту задачу субтитры сделал Claude",
+    "Зайди на сайт Amara.org.",
+    "Итак. Субтитры сделал один человек за три дня без выходных",
+):
+    ok &= check(f"речь не тронута: {speech!r}", strip_credit_tail(speech) == speech)
 
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)
