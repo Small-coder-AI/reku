@@ -24,7 +24,9 @@ ok = True
 
 app = QApplication([])
 app.setQuitOnLastWindowClosed(False)
-cfg = config.load()
+# Дефолты, а не config.load(): load() создаёт config.json в настоящем каталоге данных
+# (у dev-чекаута — корень репозитория), а чужие настройки (тема и т.п.) меняли бы ход теста.
+cfg = config.Config()
 
 bridge = Bridge()
 engine = DictationApp(cfg, on_state=bridge.stateChanged.emit,
