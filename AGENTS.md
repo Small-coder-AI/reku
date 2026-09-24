@@ -82,6 +82,11 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
   всю работу делает рабочий поток `DictationApp`. Никакого I/O, PortAudio и долгих локов в
   колбэках: превышение `LowLevelHooksTimeout` — и Windows молча снимает хук. GUI зовёт те
   же `request_*`. Слушатель клавиш стартует независимо от загрузки модели.
+- **Плашка-индикатор (`gui_overlay.py`) не должна брать фокус**: `WindowDoesNotAcceptFocus`
+  + `WA_ShowWithoutActivating` + `WindowTransparentForInput`. Она появляется в момент
+  нажатия хоткея — активируйся она, Ctrl+V ушёл бы в неё, а не в окно пользователя.
+- **Растягивание окна — `gui_resize.py`**: ответ на `WM_NCHITTEST` в `MainWindow.nativeEvent`,
+  дальше растягивает сама Windows. `QSizeGrip` не возвращать — тянул только за один угол.
 - **`REKU_SELFTEST=1`** — хук в `gui.main()`: вместо UI выполняется короткая самопроверка,
   результат в `%APPDATA%\Reku\selftest.json` (на этом построен test_frozen_smoke.py).
 - GUI при старте снимает залипшие offline-флаги HuggingFace (`TRANSFORMERS_OFFLINE` и т.п.),

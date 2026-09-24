@@ -557,6 +557,11 @@ class DictationApp:
         except ValueError as e:
             print(f"[apply_config] {e}", file=sys.stderr)
 
+    @property
+    def busy(self) -> bool:
+        """Идёт запись или распознавание — модель сейчас не перезагрузить."""
+        return self._recording or self._transcribing
+
     def reload_model(self):
         """Перезагрузка модели (после смены model/device/compute). Зови в фоне."""
         with self._lock:

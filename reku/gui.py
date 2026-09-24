@@ -25,20 +25,26 @@ if sys.stdout:
 # на 3.12.10 не воспроизводится. Не переносить ниже PySide6!
 import pynput  # noqa: F401
 
-from PySide6.QtCore import Qt, QObject, Signal, QSize, QTimer
+from PySide6.QtCore import Qt, QObject, QEvent, Signal, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QFrame, QLabel, QPushButton, QComboBox,
     QVBoxLayout, QHBoxLayout, QStackedWidget, QGraphicsDropShadowEffect,
     QPlainTextEdit, QRadioButton, QButtonGroup, QCheckBox,
-    QSystemTrayIcon, QMenu, QSizeGrip, QScrollArea,
+    QSystemTrayIcon, QMenu, QScrollArea,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 _SINGLE_KEY = "reku-single-instance"
 
+from reku import gui_resize
 from reku import gui_theme as T
+from reku.gui_overlay import RecordingOverlay
 from reku.gui_widgets import MicOrb, WaveformStrip, draw_icon
+
+DEFAULT_SIZE = (440, 660)   # влезают и главная страница, и настройки без прокрутки
+MIN_SIZE = (360, 460)
+_SCROLL_INSET = gui_resize.BAND_IN + 3   # отступ полосы прокрутки настроек от края
 
 # карты для комбобоксов настроек
 MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
@@ -141,6 +147,22 @@ def _row(label, widget):
     return w
 
 
+def _section(title):
+    lab = QLabel(title); lab.setObjectName("SectionLabel")
+    return lab
+
+
+class _WheelGuard(QObject):
+    """Колесо мыши над комбобоксом без фокуса прокручивает страницу, а не меняет
+    значение: иначе, листая настройки, можно молча сменить модель или хоткей."""
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.Type.Wheel and not obj.hasFocus():
+            e.ignore()          # событие уйдёт родителю — области прокрутки
+            return True
+        return False
+
+
 _CHECK_URL = None
 
 
@@ -173,6 +195,9 @@ def _check_icon_url():
 
 
 class MainWindow(QWidget):
+    # из фонового потока перезагрузки в GUI-поток: движок был занят, повторить позже
+    _reloadDeferred = Signal(object)
+
     def __init__(self, cfg, engine=None, bridge=None):
         super().__init__()
         self.cfg = cfg
@@ -182,8 +207,8 @@ class MainWindow(QWidget):
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setMinimumSize(360, 460)
-        self.resize(440, 640)            # дефолт с запасом под страницу настроек
+        self.setMinimumSize(*MIN_SIZE)
+        self._restore_size()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 16, 18, 18)  # место под тень
@@ -204,6 +229,8 @@ class MainWindow(QWidget):
         self.stack.addWidget(self._build_settings_page())
 
         self._tray_refresh = None        # колбэк перерисовки иконки трея (ставит main())
+        self._pending_reload = None      # смена модели, отложенная до конца записи
+        self._reloadDeferred.connect(self._start_reload)
         self.apply_theme()               # тёмная/светлая/системная из cfg.theme
 
         self._flashing = False
@@ -211,11 +238,12 @@ class MainWindow(QWidget):
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._end_flash)
 
-        # уголок для растягивания frameless-окна — ребёнок КАРТОЧКИ (не self), чтобы
-        # позиционировать его относительно видимой рамки, а не прозрачных полей тени
-        self._grip = QSizeGrip(self.card)
-        self._grip.setFixedSize(14, 14)
-        self._position_grip()
+        # растянутый размер окна запоминаем, когда пользователь отпустил край
+        self._size_timer = QTimer(self)
+        self._size_timer.setSingleShot(True)
+        self._size_timer.timeout.connect(self._save_size)
+
+        self.overlay = RecordingOverlay(cfg)   # плашка «Запись…» поверх всех окон
 
         self.set_state("loading")
 
@@ -275,19 +303,25 @@ class MainWindow(QWidget):
 
     # ── страница настроек ────────────────────────────────────
     def _build_settings_page(self):
-        inner = QWidget(); inner.setObjectName("SettingsInner")
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(22, 8, 22, 20); lay.setSpacing(12)
+        """Шапка и «Применить» — вне прокрутки: видны при любом размере окна.
+        Прокручивается только список; редкие настройки свёрнуты в «Дополнительно»."""
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
 
-        head = QHBoxLayout()
+        head = QHBoxLayout(); head.setContentsMargins(22, 4, 22, 6)
         self.back_btn = QPushButton(); self.back_btn.setObjectName("IconBtn")
         self.back_btn.setFixedSize(36, 34); self.back_btn.setCursor(Qt.PointingHandCursor)
         self.back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         ttl = QLabel("Настройки"); ttl.setObjectName("TitleLabel")
         head.addWidget(self.back_btn); head.addSpacing(6); head.addWidget(ttl); head.addStretch(1)
-        lay.addLayout(head)
+        outer.addLayout(head)
 
-        sec1 = QLabel("МОДЕЛЬ"); sec1.setObjectName("SectionLabel"); lay.addWidget(sec1)
+        inner = QWidget(); inner.setObjectName("SettingsInner")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(22, 0, 22 - _SCROLL_INSET, 10); lay.setSpacing(8)
+
+        lay.addWidget(_section("РАСПОЗНАВАНИЕ"))
         self.model_combo = QComboBox(); self.model_combo.addItems(MODELS)
         self._select_text(self.model_combo, self.cfg.model)
         self.device_combo = QComboBox()
@@ -298,13 +332,20 @@ class MainWindow(QWidget):
         _api_i = self.device_combo.findData("api")
         if _api_i >= 0:
             self.device_combo.model().item(_api_i).setEnabled(False)
-        self.compute_combo = QComboBox(); self.compute_combo.addItems(COMPUTES)
-        self._select_text(self.compute_combo, self.cfg.compute_type)
         lay.addWidget(_row("Модель", self.model_combo))
         lay.addWidget(_row("Устройство", self.device_combo))
-        lay.addWidget(_row("Точность", self.compute_combo))
 
-        sec2 = QLabel("ВВОД"); sec2.setObjectName("SectionLabel"); lay.addWidget(sec2)
+        vocab_lbl = QLabel("Словарь терминов"); vocab_lbl.setObjectName("RowLabel")
+        lay.addWidget(vocab_lbl)
+        self.vocab_edit = QPlainTextEdit()
+        self.vocab_edit.setPlainText(self.cfg.hotwords)
+        self.vocab_edit.setPlaceholderText(
+            "термины через запятую или с новой строки\n(например: GitHub, Docker, PostgreSQL…)")
+        self.vocab_edit.setFixedHeight(60)
+        lay.addWidget(self.vocab_edit)
+
+        lay.addSpacing(4)
+        lay.addWidget(_section("ДИКТОВКА"))
         self.hotkey_combo = QComboBox()
         for label, val in HOTKEYS:
             self.hotkey_combo.addItem(label, val)
@@ -319,7 +360,12 @@ class MainWindow(QWidget):
         ml.addWidget(self.ptt_radio); ml.addWidget(self.tog_radio); ml.addStretch(1)
         lay.addWidget(_row("Режим", modew))
 
-        secU = QLabel("ОФОРМЛЕНИЕ"); secU.setObjectName("SectionLabel"); lay.addWidget(secU)
+        self.overlay_chk = QCheckBox("Индикатор записи внизу экрана")
+        self.overlay_chk.setChecked(self.cfg.show_overlay)
+        lay.addWidget(self.overlay_chk)
+
+        lay.addSpacing(4)
+        lay.addWidget(_section("СИСТЕМА"))
         self.theme_combo = QComboBox()
         for label, val in THEMES:
             self.theme_combo.addItem(label, val)
@@ -327,33 +373,6 @@ class MainWindow(QWidget):
         self.theme_combo.currentIndexChanged.connect(self._theme_changed)
         lay.addWidget(_row("Тема", self.theme_combo))
 
-        sec3 = QLabel("РАСПОЗНАВАНИЕ"); sec3.setObjectName("SectionLabel"); lay.addWidget(sec3)
-        self.vad_chk = QCheckBox("VAD — резать тишину/шум")
-        self.vad_chk.setChecked(self.cfg.vad_filter)
-        self.halluc_chk = QCheckBox("Фильтр галлюцинаций")
-        self.halluc_chk.setChecked(self.cfg.drop_hallucinations)
-        lay.addWidget(self.vad_chk); lay.addWidget(self.halluc_chk)
-
-        vocab_lbl = QLabel("Словарь терминов"); vocab_lbl.setObjectName("RowLabel")
-        lay.addWidget(vocab_lbl)
-        self.vocab_edit = QPlainTextEdit()
-        self.vocab_edit.setPlainText(self.cfg.hotwords)
-        self.vocab_edit.setPlaceholderText(
-            "термины через запятую или с новой строки\n(например: GitHub, Docker, PostgreSQL…)")
-        self.vocab_edit.setFixedHeight(76)
-        lay.addWidget(self.vocab_edit)
-
-        prompt_lbl = QLabel("Промпт декодеру"); prompt_lbl.setObjectName("RowLabel")
-        lay.addWidget(prompt_lbl)
-        self.prompt_edit = QPlainTextEdit()
-        self.prompt_edit.setPlainText(self.cfg.initial_prompt)
-        self.prompt_edit.setPlaceholderText(
-            "подсказка о стиле/языках диктовки (initial_prompt);\n"
-            "влияет на пунктуацию и написание терминов")
-        self.prompt_edit.setFixedHeight(76)
-        lay.addWidget(self.prompt_edit)
-
-        secS = QLabel("СИСТЕМА"); secS.setObjectName("SectionLabel"); lay.addWidget(secS)
         self.autostart_chk = QCheckBox("Запускать при старте Windows")
         try:
             from reku import autostart
@@ -363,27 +382,78 @@ class MainWindow(QWidget):
         self.autostart_chk.toggled.connect(self._autostart_toggled)
         lay.addWidget(self.autostart_chk)
 
-        self.runtime_lbl = QLabel("Работает: —")
-        self.runtime_lbl.setObjectName("HintLabel")
-        lay.addWidget(self.runtime_lbl)
+        lay.addSpacing(2)
+        self.adv_btn = QPushButton("Дополнительно"); self.adv_btn.setObjectName("LinkBtn")
+        self.adv_btn.setCheckable(True); self.adv_btn.setCursor(Qt.PointingHandCursor)
+        self.adv_btn.toggled.connect(self._toggle_advanced)
+        lay.addWidget(self.adv_btn)
 
+        self.adv_box = QWidget()
+        adv = QVBoxLayout(self.adv_box); adv.setContentsMargins(0, 0, 0, 0); adv.setSpacing(8)
+        self.compute_combo = QComboBox(); self.compute_combo.addItems(COMPUTES)
+        self._select_text(self.compute_combo, self.cfg.compute_type)
+        adv.addWidget(_row("Точность", self.compute_combo))
+        self.vad_chk = QCheckBox("VAD — резать тишину/шум")
+        self.vad_chk.setChecked(self.cfg.vad_filter)
+        self.halluc_chk = QCheckBox("Фильтр галлюцинаций")
+        self.halluc_chk.setChecked(self.cfg.drop_hallucinations)
+        adv.addWidget(self.vad_chk); adv.addWidget(self.halluc_chk)
+        prompt_lbl = QLabel("Промпт декодеру"); prompt_lbl.setObjectName("RowLabel")
+        adv.addWidget(prompt_lbl)
+        self.prompt_edit = QPlainTextEdit()
+        self.prompt_edit.setPlainText(self.cfg.initial_prompt)
+        self.prompt_edit.setPlaceholderText(
+            "подсказка о стиле/языках диктовки (initial_prompt);\n"
+            "влияет на пунктуацию и написание терминов")
+        self.prompt_edit.setFixedHeight(76)
+        adv.addWidget(self.prompt_edit)
+        self.adv_box.setVisible(False)
+        lay.addWidget(self.adv_box)
         lay.addStretch(1)
-        self.apply_btn = QPushButton("Применить"); self.apply_btn.setObjectName("RecordBtn")
-        self.apply_btn.setCursor(Qt.PointingHandCursor)
-        self.apply_btn.clicked.connect(self._apply_settings)
-        lay.addWidget(self.apply_btn)
 
-        scroll = QScrollArea()
+        guard = _WheelGuard(self)
+        for combo in inner.findChildren(QComboBox):
+            combo.setFocusPolicy(Qt.StrongFocus)   # фокус колесом — тоже нет
+            combo.installEventFilter(guard)
+
+        self.settings_scroll = scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(inner)
         # НЕ зовём scroll.setStyleSheet(...) и НЕ делаем вьюпорт прозрачным: отдельный
-        # стиль на контейнере обрывал каскад глобального #RecordBtn к кнопке «Применить»
-        # внутри (она теряла синий фон и была невидима). Прозрачность не нужна — вьюпорт
-        # красит palette(Window) = bg_window, что совпадает с карточкой (палитру ставит
-        # apply_theme через T.build_palette, поэтому фон сходится в обеих темах).
-        return scroll
+        # стиль на контейнере обрывает каскад глобального QSS к виджетам внутри.
+        # Прозрачность не нужна — вьюпорт красит palette(Window) = bg_window, что
+        # совпадает с карточкой (палитру ставит apply_theme через T.build_palette).
+        # полоса прокрутки — чуть левее края карточки: у самого края зона захвата
+        # для растягивания окна (gui_resize.BAND_IN) перекрывала бы её ползунок
+        wrap = QHBoxLayout(); wrap.setContentsMargins(0, 0, _SCROLL_INSET, 0)
+        wrap.addWidget(scroll)
+        outer.addLayout(wrap, 1)
+
+        foot = QFrame(); foot.setObjectName("SettingsFooter")
+        fl = QVBoxLayout(foot); fl.setContentsMargins(22, 10, 22, 18); fl.setSpacing(6)
+        self.runtime_lbl = QLabel("Работает: —")
+        self.runtime_lbl.setObjectName("HintLabel")
+        fl.addWidget(self.runtime_lbl)
+        self.apply_btn = QPushButton("Применить"); self.apply_btn.setObjectName("RecordBtn")
+        self.apply_btn.setCursor(Qt.PointingHandCursor)
+        self.apply_btn.clicked.connect(self._apply_settings)
+        fl.addWidget(self.apply_btn)
+        outer.addWidget(foot)
+        return page
+
+    def _toggle_advanced(self, on):
+        self.adv_box.setVisible(on)
+        self._update_adv_icon()
+        if on:   # раскрытый блок — сразу в поле зрения
+            QTimer.singleShot(0, lambda: self.settings_scroll.ensureWidgetVisible(
+                self.prompt_edit, 0, 12))
+
+    def _update_adv_icon(self):
+        kind = "chevron_down" if self.adv_btn.isChecked() else "chevron_right"
+        self.adv_btn.setIcon(draw_icon(kind, T.ACTIVE.text2, size=14))
+        self.adv_btn.setIconSize(QSize(14, 14))
 
     # ── helpers выбора в комбобоксах ─────────────────────────
     @staticmethod
@@ -455,6 +525,7 @@ class MainWindow(QWidget):
         self.gear_btn.setIconSize(QSize(18, 18))
         self.back_btn.setIcon(draw_icon("back", pal.text2, size=18))
         self.back_btn.setIconSize(QSize(18, 18))
+        self._update_adv_icon()
         self.orb.update(); self.wave.update()
         if self._tray_refresh:
             self._tray_refresh(self._state)
@@ -496,16 +567,22 @@ class MainWindow(QWidget):
         # мочь подключить микрофон и повторить запись без перезапуска приложения
         busy = state not in ("idle", "recording", "error")   # loading/downloading/transcribing
         self.rec_btn.setEnabled(not busy)
+        err = None
         if state == "idle":
             self._update_hint()          # сама сбрасывает стиль/тултип ошибки
             self._update_runtime_label()
         elif state == "error":
             err = getattr(self.engine, "_last_error", None) if self.engine else None
-            self._set_hint_error(err or "Не удалось загрузить модель — проверьте устройство/сеть")
+            err = err or "Не удалось загрузить модель — проверьте устройство/сеть"
+            self._set_hint_error(err)
         else:
             # ушли из error в loading/recording/transcribing, минуя idle — стиль
             # подсказки вернуть сразу (текст обновит ближайший идущий в idle/error)
             self._clear_hint_error()
+        self.overlay.on_state(state, err)
+        if state in ("idle", "error") and self._pending_reload is not None:
+            old, self._pending_reload = self._pending_reload, None
+            QTimer.singleShot(0, lambda: self._start_reload(old))
 
     def set_result(self, text):
         # текст уже вставлен в активное окно; в самой программе его не дублируем —
@@ -513,6 +590,7 @@ class MainWindow(QWidget):
         self.status.setText("✓ вставлено")
         self._flashing = True
         self._flash_timer.start(1500)
+        self.overlay.on_result()
 
     def _end_flash(self):
         self._flashing = False
@@ -521,22 +599,45 @@ class MainWindow(QWidget):
     def set_level(self, rms):
         self.orb.set_level(rms)
         self.wave.set_level(rms)
+        self.overlay.set_level(rms)
 
-    def _position_grip(self):
-        """Уголок — в нижнем правом углу КАРТОЧКИ (grip — её ребёнок), с отступом,
-        чтобы не попасть под скруглённый border-radius (иначе часть уголка
-        обрезается вместе с углом карточки и визуально пропадает)."""
-        grip = getattr(self, "_grip", None)
-        if grip is None:
-            return
-        inset = 8
-        grip.move(self.card.width() - grip.width() - inset,
-                  self.card.height() - grip.height() - inset)
-        grip.raise_()
+    # ── размер окна: тянется за любой край, размер запоминается ─
+    def nativeEvent(self, event_type, message):
+        if sys.platform == "win32" and event_type == b"windows_generic_MSG":
+            res = gui_resize.handle_native_event(self, self.card.geometry(), message)
+            if res is not None:
+                return True, res
+        return super().nativeEvent(event_type, message)
+
+    def _restore_size(self):
+        """Размер, до которого окно растянули в прошлый раз, — в пределах экрана."""
+        w = self.cfg.window_width or DEFAULT_SIZE[0]
+        h = self.cfg.window_height or DEFAULT_SIZE[1]
+        scr = QApplication.primaryScreen()
+        if scr is not None:
+            g = scr.availableGeometry()
+            w, h = min(w, g.width()), min(h, g.height())
+        self.resize(max(w, MIN_SIZE[0]), max(h, MIN_SIZE[1]))
+        self._saved_size = (self.width(), self.height())
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        self._position_grip()
+        timer = getattr(self, "_size_timer", None)
+        if timer is not None and self.isVisible():
+            timer.start(600)          # сохранить, когда край отпустили
+
+    def _save_size(self):
+        size = (self.width(), self.height())
+        if size == self._saved_size:
+            return
+        self._saved_size = size
+        from reku import config as _cfg
+        # сохраняем весь конфиг — не затереть правки файла; битый файл ради размера
+        # окна не трогаем вовсе
+        if not self._sync_cfg_from_disk():
+            return
+        self.cfg.window_width, self.cfg.window_height = size
+        _cfg.save(self.cfg)
 
     # ── действия ─────────────────────────────────────────────
     def _toggle_record(self):
@@ -562,12 +663,20 @@ class MainWindow(QWidget):
         """Перечитать config.json в self.cfg (сам объект сохраняем — на него держат
         ссылки движок и страницы UI). Без этого сохранение настроек из UI писало
         на диск конфиг из памяти целиком и молча затирало внешние правки файла
-        (в т.ч. полей, которых в UI нет)."""
+        (в т.ч. полей, которых в UI нет). Файл битый (правят руками и ошиблись) —
+        настройки дефолтами не подменяем: остаётся последняя рабочая версия из памяти.
+        -> True, если файл перечитан."""
         from dataclasses import fields
         from reku import config as _cfg
-        fresh = _cfg.load()
+        try:
+            fresh = _cfg.load(strict=True)
+        except (ValueError, OSError) as e:
+            print(f"[config] не перечитал config.json ({e}) — беру настройки из памяти",
+                  file=sys.stderr, flush=True)
+            return False
         for f in fields(fresh):
             setattr(self.cfg, f.name, getattr(fresh, f.name))
+        return True
 
     def _open_settings(self):
         """Показать настройки, освежив виджеты из config.json: файл могли править
@@ -584,6 +693,7 @@ class MainWindow(QWidget):
         self.theme_combo.blockSignals(False)
         self.vad_chk.setChecked(c.vad_filter)
         self.halluc_chk.setChecked(c.drop_hallucinations)
+        self.overlay_chk.setChecked(c.show_overlay)
         self.vocab_edit.setPlainText(c.hotwords)
         self.prompt_edit.setPlainText(c.initial_prompt)
         self.stack.setCurrentIndex(1)
@@ -600,6 +710,9 @@ class MainWindow(QWidget):
         c.mode = "toggle" if self.tog_radio.isChecked() else "ptt"
         c.vad_filter = self.vad_chk.isChecked()
         c.drop_hallucinations = self.halluc_chk.isChecked()
+        c.show_overlay = self.overlay_chk.isChecked()
+        if not c.show_overlay:
+            self.overlay.dismiss()
         # многострочный ввод -> чистый список «через запятую» (по строкам и запятым)
         c.hotwords = ", ".join(s.strip() for s in self.vocab_edit.toPlainText().splitlines()
                                if s.strip())
@@ -611,10 +724,21 @@ class MainWindow(QWidget):
         self._select_data(self.lang_combo, c.language)
         self.stack.setCurrentIndex(0)
         if self.engine and (c.model, c.device, c.compute_type) != old:
-            import threading
-            self.set_state("loading")
-            threading.Thread(target=lambda: self._reload_with_rollback(old),
-                             daemon=True).start()
+            self._start_reload(old)
+
+    def _start_reload(self, old):
+        """Перезагрузить модель в фоне. Идёт запись или распознавание — отложить до
+        их конца: движок во время записи модель не меняет, а окно и плашка не должны
+        показывать «Загрузку» или «Готов» поверх идущей записи."""
+        if self.engine is None:
+            return
+        if self.engine.busy or self._state in ("recording", "transcribing"):
+            self._pending_reload = old       # запустит set_state("idle"/"error")
+            return
+        import threading
+        self.set_state("loading")
+        threading.Thread(target=lambda: self._reload_with_rollback(old),
+                         daemon=True).start()
 
     def _reload_with_rollback(self, old):
         """reload_model в фоне; при ошибке — откатить model/device/compute_type
@@ -624,8 +748,10 @@ class MainWindow(QWidget):
         from reku import config as _cfg
         emit = self.bridge.stateChanged.emit if self.bridge else self.set_state
         try:
-            if not self.engine.reload_model():   # False = движок занят записью
-                emit("idle")                     # не виснуть в loading
+            if not self.engine.reload_model():
+                # запись началась между кликом и стартом потока: состояние окну
+                # пришлёт сам движок, перезагрузку повторим после записи
+                self._reloadDeferred.emit(old)
         except Exception as e:
             print(f"[engine] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             c = self.cfg

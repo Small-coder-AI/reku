@@ -122,6 +122,9 @@ class Config:
 
     # ── интерфейс ────────────────────────────────────────────
     theme: str = "system"            # system (за темой Windows) / dark / light
+    show_overlay: bool = True        # плашка «Запись / Распознаю…» внизу экрана поверх окон
+    window_width: int = 0            # размер окна, растянутый пользователем; 0 = по умолчанию
+    window_height: int = 0
 
     # ── распознавание ────────────────────────────────────────
     language: str = "ru"             # "" = авто-детект; "ru" фиксирует язык (меньше латиницы)
@@ -158,18 +161,25 @@ class Config:
         return self.language or None
 
 
-def load(path: str = CONFIG_PATH) -> Config:
-    """Грузит конфиг; недостающие поля берёт из дефолтов; создаёт файл, если нет."""
+def load(path: str = CONFIG_PATH, strict: bool = False) -> Config:
+    """Грузит конфиг; недостающие поля берёт из дефолтов; создаёт файл, если нет.
+    strict=True — битый или нечитаемый файл не подменять дефолтами, а бросить
+    исключение (ValueError/OSError): UI тогда держит последнюю рабочую версию из
+    памяти и не затирает дефолтами файл, который пользователь правит руками."""
     cfg = Config()
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("в config.json не объект JSON")
             known = {f.name for f in fields(Config)}
             for k, v in data.items():
                 if k in known:
                     setattr(cfg, k, v)
-        except (json.JSONDecodeError, OSError) as e:
+        except (ValueError, OSError) as e:      # JSONDecodeError — подкласс ValueError
+            if strict:
+                raise
             print(f"[config] не смог прочитать {path}: {e}; беру дефолты")
     else:
         save(cfg, path)

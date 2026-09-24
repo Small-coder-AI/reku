@@ -74,5 +74,22 @@ ok &= check("временных файлов не осталось",
             set(os.listdir(_tmp)) == {"config.json", "config_unknown.json",
                                       "config_atomic.json"})
 
+# битый файл: обычная загрузка берёт дефолты, strict — бросает (UI тогда не затирает
+# файл дефолтами); JSON не-объект больше не роняет загрузку
+for name, content in (("config_broken.json", '{"model": "tiny",'),
+                      ("config_list.json", "[1, 2]")):
+    _p = os.path.join(_tmp, name)
+    with open(_p, "w", encoding="utf-8") as f:
+        f.write(content)
+    ok &= check(f"{name}: load() не падает и берёт дефолты",
+                config.load(_p).model == config.Config().model)
+    try:
+        config.load(_p, strict=True)
+        ok &= check(f"{name}: load(strict=True) бросает ValueError", False)
+    except ValueError:
+        ok &= check(f"{name}: load(strict=True) бросает ValueError", True)
+    with open(_p, encoding="utf-8") as f:
+        ok &= check(f"{name}: сам файл не тронут", f.read() == content)
+
 print("\nИТОГ:", "ВСЕ ПРОШЛИ" if ok else "ЕСТЬ ПАДЕНИЯ")
 raise SystemExit(0 if ok else 1)
