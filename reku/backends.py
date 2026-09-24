@@ -368,8 +368,20 @@ class OpenVINOBackend(Backend):
             kwargs["language"] = lang
         if cfg.initial_prompt:
             kwargs["initial_prompt"] = cfg.initial_prompt
-        # beam_size/no_repeat_ngram_size/condition_on_previous_text — CT2-специфика,
-        # в GenAI не пробрасываются: greedy-декод (качество подтверждено бенчем).
+        # словарь терминов: WhisperGenerationConfig.hotwords поддерживается (в отличие
+        # от CT2-полей ниже) — токены после <|startofprev|> во ВСЕХ окнах генерации
+        hotwords = getattr(cfg, "hotwords", "")
+        if hotwords:
+            kwargs["hotwords"] = hotwords
+        # num_beams — опт-ин через отдельное поле ov_num_beams, а не через
+        # beam_size: beam_size — CT2-поле, начни OV-путь его слушать, iGPU-
+        # пользователи получили бы неожиданное замедление без своего решения.
+        # 1 (дефолт) = greedy, как и было, как проверено бенчем.
+        num_beams = getattr(cfg, "ov_num_beams", 1)
+        if num_beams > 1:
+            kwargs["num_beams"] = num_beams
+        # no_repeat_ngram_size/condition_on_previous_text — CT2-специфика,
+        # в GenAI не пробрасываются.
         result = self._pipe.generate(audio.tolist(), **kwargs)
         segments = chunks_to_segments(getattr(result, "chunks", None))
         return segments, make_ov_info(cfg.language, duration)
@@ -382,7 +394,9 @@ class WhisperCppBackend(Backend):
     Вся механика (движок/процесс/HTTP) — в whisper_cpp.py.
 
     Ограничено by design (не «чинить» симметрию с CUDA-путём):
-      - hotwords и no_repeat_ngram_size движок не принимает (аналогов нет);
+      - у сервера нет отдельного поля hotwords — эмулируются через prompt
+        (склейка с initial_prompt: сначала hotwords, затем сам промпт, как в
+        CT2-пути); no_repeat_ngram_size движок не принимает (аналога нет вообще);
       - condition_on_previous_text НЕ настраивается: сервер v1.9.1 всегда
         работает в режиме no_context=true (наш дефолт False и есть);
       - language_probability считается ТОЛЬКО при включённом фильтре
@@ -464,8 +478,13 @@ class WhisperCppBackend(Backend):
             # faster-whisper (suppress_tokens=-1), меньше мусора на шуме
             "suppress_nst": "true",
         }
-        if cfg.initial_prompt:
-            fields["prompt"] = cfg.initial_prompt
+        # у сервера нет поля hotwords — подмешиваем в prompt: сначала термины,
+        # потом сам initial_prompt (порядок как в CT2-пути, см. faster_whisper.
+        # get_prompt: hotwords_tokens идут перед previous_tokens)
+        hotwords = getattr(cfg, "hotwords", "") or ""
+        prompt = " ".join(p for p in (hotwords, cfg.initial_prompt or "") if p)
+        if prompt:
+            fields["prompt"] = prompt
         if not want_prob:
             # детекция языка — лишний проход энкодера, нужна только фильтру
             fields["no_language_probabilities"] = "true"

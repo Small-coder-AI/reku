@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# См. release.yml: у hosted-раннера Windows stdout не консоль -> кодировка cp1252;
+# тесты печатают русский текст и падали бы с UnicodeEncodeError без PYTHONUTF8.
+# QT_QPA_PLATFORM=offscreen — раннер без дисплея, Qt не должен пытаться его открыть.
+env:
+  PYTHONUTF8: "1"
+  QT_QPA_PLATFORM: "offscreen"
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+
+      # Базовых зависимостей (без extras) достаточно: движки в тестах мокаются —
+      # OpenVINO/CUDA по-настоящему не импортируются (см. tests/test_backends.py),
+      # а onnxruntime (Silero VAD из faster-whisper) идёт транзитивной зависимостью.
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # Гейт, как в release.yml: --no-sync — иначе uv run сделал бы неявный
+      # пере-sync под дефолтный набор пакетов.
+      # Гоняем ВСЕ файлы и падаем в конце: при выходе на первом упавшем остальные
+      # тесты на Windows не запускаются вовсе, и их поломки не видно до следующего пуша.
+      - name: Run tests
+        shell: pwsh
+        run: |
+          $failed = @()
+          Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object {
+            uv run --no-sync python $_.FullName
+            if ($LASTEXITCODE -ne 0) { $failed += $_.Name }
+          }
+          if ($failed) { Write-Error "FAILED: $($failed -join ', ')"; exit 1 }
+
+      - name: Lint (ruff)
+        run: uvx ruff check .

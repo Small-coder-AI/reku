@@ -8,7 +8,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPixmap, QPainter, QColor
-from PySide6.QtCore import Qt
 
 from reku import config
 from reku.gui import MainWindow

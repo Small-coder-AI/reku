@@ -20,6 +20,13 @@ if ($LASTEXITCODE -ne 0) {
     & $py -m pip install pyinstaller
 }
 
+# 0b) Pillow в venv (нужен только make_ico.py — dev-зависимость, в requirements.txt её нет)
+& $py -c "import PIL" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Ставлю Pillow в venv..." -ForegroundColor Cyan
+    & $py -m pip install Pillow
+}
+
 # 1) чистка прошлой сборки
 if ($Clean) { Remove-Item -Recurse -Force (Join-Path $root "build"),(Join-Path $root "dist") -ErrorAction SilentlyContinue }
 

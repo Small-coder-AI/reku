@@ -2,10 +2,15 @@
 #   irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | % TrimStart ([char]0xFEFF) | iex
 #   (% TrimStart снимает BOM: под Windows PowerShell 5.1 irm отдаёт файл с ведущим
 #    U+FEFF, из-за чего iex принимает первую строку-комментарий за команду «#».)
+# По умолчанию ставится код последнего релиза (GitHub Releases). Другая версия —
+# скачай файл и запусти локально с параметром:
+#   .\install.ps1 -Ref v1.2.3      # конкретный релиз/тег
+#   .\install.ps1 -Ref main        # ветка (голова, без релиза)
 # Локальная отладка:  .\install.ps1 -SourcePath C:\path\to\reku
 # Удаление:           .\install.ps1 -Uninstall
 param(
     [string]$SourcePath = "",
+    [string]$Ref = "",
     [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
@@ -16,7 +21,6 @@ $ErrorActionPreference = "Stop"
     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $AppName    = "Reku"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\$AppName"
-$RepoZip    = "https://github.com/Small-coder-AI/reku/archive/refs/heads/main.zip"
 $StartMenu  = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 $RunKey     = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -137,7 +141,36 @@ if (-not $py) {
 Write-Host "    Python: $(& $py.Split()[0] $py.Split()[1..99] --version)"
 
 # ── 3. Код ───────────────────────────────────────────────────
+# -Ref не задан и не локальная отладка -> берём последний релиз (GitHub API).
+# Офлайн/рейт-лимит/иной сбой API — не фатально, ставим main.
+if (-not $SourcePath -and -not $Ref) {
+    Write-Step "Ищу последний релиз..."
+    try {
+        $release = Invoke-RestMethod "https://api.github.com/repos/Small-coder-AI/reku/releases/latest" `
+            -Headers @{ "User-Agent" = "reku-install.ps1" }
+        # Служебные релизы движка (engine-whisper-cpp-*) публикуются с make_latest=false
+        # и сюда попасть не должны — доп. страховка: тег обязан быть версийным (vX...).
+        if ($release.tag_name -match '^v\d') {
+            $Ref = $release.tag_name
+        } else {
+            Write-Warning "У /latest неожиданный тег '$($release.tag_name)' — ставлю main."
+        }
+    } catch {
+        Write-Warning "Не удалось узнать последний релиз ($($_.Exception.Message)) — ставлю main."
+    }
+    if (-not $Ref) { $Ref = "main" }
+}
+if (-not $SourcePath) {
+    # версийный тег (vX.Y.Z) -> архив тега, иначе Ref — имя ветки -> архив ветки
+    $RepoZip = if ($Ref -match '^v\d') {
+        "https://github.com/Small-coder-AI/reku/archive/refs/tags/$Ref.zip"
+    } else {
+        "https://github.com/Small-coder-AI/reku/archive/refs/heads/$Ref.zip"
+    }
+}
+
 Write-Step "Получаю код в $InstallDir..."
+if (-not $SourcePath) { Write-Host "    Ставлю: $Ref" }
 Stop-RekuProcesses      # живые процессы держат DLL — обновление оставило бы огрызки
 Remove-ExeInstall       # остатки установки exe-инсталлятором (общая папка)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -146,11 +179,17 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # старые модули reku/ иначе оставались бы висеть. Заменяем каталог целиком, а
 # не сливаем; .venv и models — соседи $InstallDir\reku, их это не трогает.
 Remove-Item -Recurse -Force (Join-Path $InstallDir "reku") -ErrorAction SilentlyContinue
-$codeItems = @("reku", "scripts", "packaging", "requirements.txt", "requirements.lock.txt")
+$codeItems = @("reku", "scripts", "packaging", "requirements.txt")
+# requirements.lock.txt — опционально: старые релизы (до этой фичи) могли его не содержать.
+$optionalCodeItems = @("requirements.lock.txt")
 if ($SourcePath) {
     foreach ($it in $codeItems) { Copy-Item -Recurse -Force (Join-Path $SourcePath $it) $InstallDir }
+    foreach ($it in $optionalCodeItems) {
+        $optSrc = Join-Path $SourcePath $it
+        if (Test-Path $optSrc) { Copy-Item -Force $optSrc $InstallDir }
+    }
 } else {
-    # НЕ %TEMP%: у профилей с не-ASCII именем (C:\Users\Иван) elevated-запуск
+    # НЕ %TEMP%: у профилей с не-ASCII именем (например, C:\Users\Иван) elevated-запуск
     # PowerShell получает TEMP коротким DOS-путём (C:\Users\ABCD~1\...), и
     # Windows PowerShell 5.1 спотыкается на «~» при разрешении пути — установка
     # валилась прямо здесь, SilentlyContinue не спасал (боевой случай 2026-07-26).
@@ -165,8 +204,14 @@ if ($SourcePath) {
     }
     Invoke-WebRequest $RepoZip -OutFile "$tmp.zip"
     Expand-Archive "$tmp.zip" $tmp -Force
-    $src = Get-ChildItem $tmp -Directory | Select-Object -First 1   # reku-main/
+    # имя каталога внутри архива зависит от Ref (reku-main/ для ветки, reku-0.2.2/
+    # для тега v0.2.2 и т.п.) — просто берём единственный подкаталог, не завязываясь на имя.
+    $src = Get-ChildItem $tmp -Directory | Select-Object -First 1
     foreach ($it in $codeItems) { Copy-Item -Recurse -Force (Join-Path $src.FullName $it) $InstallDir }
+    foreach ($it in $optionalCodeItems) {
+        $optSrc = Join-Path $src.FullName $it
+        if (Test-Path $optSrc) { Copy-Item -Force $optSrc $InstallDir }
+    }
     Remove-Item -Recurse -Force -LiteralPath $tmp, "$tmp.zip" -ErrorAction SilentlyContinue
 }
 
@@ -189,8 +234,19 @@ $dropOpenvino = ($hwProfile -eq "cpu") -or
 if ($dropOpenvino) { $req = $req | Where-Object { $_ -notmatch "^openvino" } }
 $reqFile = Join-Path $InstallDir "requirements.effective.txt"
 $req | Set-Content $reqFile -Encoding UTF8
+# Полный проверенный срез (транзитивные версии) как constraints — не как requirements:
+# -c только сужает версии пакетов, которые и так ставятся по $reqFile, лишние строки
+# (например openvino на cuda-профиле) ни на что не влияют. Старые релизы (до этой
+# фичи) могли не содержать файл — тогда просто ставим без constraints.
+$lockFile = Join-Path $InstallDir "requirements.lock.txt"
+$constraintArgs = @()
+if (Test-Path $lockFile) {
+    $constraintArgs = @("-c", $lockFile)
+} else {
+    Write-Host "    (requirements.lock.txt нет в исходниках — ставлю без constraints)"
+}
 & $vpy -m pip install --upgrade pip --quiet
-& $vpy -m pip install -r $reqFile
+& $vpy -m pip install -r $reqFile @constraintArgs
 if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
 
 # ── 4б. Проверка окружения ───────────────────────────────────
@@ -217,7 +273,7 @@ if (-not (Test-VenvHealth)) {
     Remove-Item -Recurse -Force $venv
     & $py.Split()[0] $py.Split()[1..99] -m venv $venv
     & $vpy -m pip install --upgrade pip --quiet
-    & $vpy -m pip install --no-cache-dir -r $reqFile
+    & $vpy -m pip install --no-cache-dir -r $reqFile @constraintArgs
     if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
     if (-not (Test-VenvHealth)) {
         throw "Окружение не проходит проверку и после пересоздания — напиши: github.com/Small-coder-AI/reku/issues"
@@ -259,8 +315,9 @@ if ($auto -eq "y") {
     # "-m reku" не находит пакет (он скопирован, а не pip-installed — reku не
     # резолвится, если его родитель не в sys.path). Явно подставляем InstallDir
     # через -c, как dev-режим reku/autostart.py (_exe_command) — не зависит от
-    # cwd процесса автозапуска.
-    $autostartCmd = '"{0}" -c "import sys; sys.path.insert(0, r''{1}''); from reku.gui import main; main()"' -f $pyw, $InstallDir
+    # cwd процесса автозапуска. --minimized — ПОСЛЕ код-строки -c (отдельный
+    # токен командной строки), поэтому попадает в sys.argv, а не в текст скрипта.
+    $autostartCmd = '"{0}" -c "import sys; sys.path.insert(0, r''{1}''); from reku.gui import main; main()" --minimized' -f $pyw, $InstallDir
     Set-ItemProperty -Path $RunKey -Name $AppName -Value $autostartCmd
     Write-Host "    Автозапуск включён (можно выключить в настройках $AppName)."
 }

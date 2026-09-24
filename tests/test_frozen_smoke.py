@@ -24,9 +24,7 @@ selftest.json, затем выходит. Тест читает json и свер
 вручную по подсказке в окне ('GPU (CUDA)' против 'CPU (GPU не найден)').
 """
 import os
-import sys
 import json
-import time
 import subprocess
 
 # tests/ теперь на один уровень глубже репозитория — dist/ живёт в корне

@@ -7,6 +7,7 @@
 import os
 import sys
 import json
+import tempfile
 from dataclasses import dataclass, asdict, fields
 
 from reku import APP_NAME   # безопасно: reku/__init__.py ничего не импортирует (цикла нет)
@@ -125,11 +126,14 @@ class Config:
     # ── распознавание ────────────────────────────────────────
     language: str = "ru"             # "" = авто-детект; "ru" фиксирует язык (меньше латиницы)
     beam_size: int = 5               # 1 = быстрее, 5 = точнее
+    # OpenVINO-путь: 1 = greedy-декод (как раньше); >1 = beam search — движок
+    # его поддерживает, но это медленнее на iGPU, сначала замерить на железе
+    ov_num_beams: int = 1
     # initial_prompt — якорь стиля. Дефолт — короткий русский (смещает декодер
     # к кириллице). Для смешанной ru-en диктовки бенч 2026-08-23 показал лучше
     # двуязычную инструкцию с примером («…English terms are preserved in Latin
     # script. Example: „Мы задеплоили feature в production…“») — термины латиницей
-    # и пунктуация заметно чище (см. memory/asr-benchmark-2026-08.md). Сами
+    # и пунктуация заметно чище (см. docs/ROADMAP.md, «Что уже известно»). Сами
     # термины держим отдельно в hotwords — точечный биас без стилевого «утекания».
     initial_prompt: str = "Это диктовка на русском языке."
     hotwords: str = ""               # словарь терминов: свои бренды/термины через запятую (sot_prev-биас)
@@ -177,6 +181,22 @@ def load(path: str = CONFIG_PATH) -> Config:
 
 
 def save(cfg: Config, path: str = CONFIG_PATH) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(asdict(cfg), f, ensure_ascii=False, indent=2)
+    """Атомарная запись: во временный файл рядом с целевым (flush + fsync), затем
+    os.replace. Без этого сбой посреди записи (антивирус, заполненный диск, сбой
+    питания) оставлял бы битый config.json: load() откатился бы на дефолты, а
+    следующее «Применить» в UI молча затёрло бы ими настройки пользователя."""
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(asdict(cfg), f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise

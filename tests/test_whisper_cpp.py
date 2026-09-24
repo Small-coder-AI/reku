@@ -2,11 +2,14 @@
 докачка движка — всё без сети (file://), GPU и настоящего whisper-server.
 Запуск (из корня репозитория): python tests/test_whisper_cpp.py"""
 import hashlib
+import http.server
 import io
+import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import wave
 import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -183,6 +186,35 @@ ok &= check("transcribe: фильтр включён -> детекция зап�
             "no_language_probabilities" not in _fields_p
             and _info_p.language_probability == 0.93 and _info_p.language == "ru")
 
+# ── prompt: hotwords у сервера нет как поля — эмулируем склейкой с initial_prompt ──
+_bt_hw = WhisperCppBackend(model="large-v3")
+_bt_hw._server = _FakeServer({"segments": [{"text": "x", "start": 0, "end": 1}]})
+
+
+def _prompt_for(**cfg_extra):
+    base = dict(language="ru", vad_filter=False, initial_prompt="", beam_size=5,
+                min_language_probability=0.0, hotwords="")
+    base.update(cfg_extra)
+    _bt_hw.transcribe(np.zeros(16000, dtype=np.float32), S(**base))
+    return _bt_hw._server.calls[-1][1].get("prompt")
+
+
+ok &= check("prompt: hotwords + initial_prompt -> hotwords первым",
+            _prompt_for(hotwords="PostgreSQL, Redis", initial_prompt="Это диктовка.")
+            == "PostgreSQL, Redis Это диктовка.")
+ok &= check("prompt: только hotwords",
+            _prompt_for(hotwords="PostgreSQL", initial_prompt="") == "PostgreSQL")
+ok &= check("prompt: только initial_prompt (как раньше)",
+            _prompt_for(hotwords="", initial_prompt="Это диктовка.") == "Это диктовка.")
+ok &= check("prompt: оба пустые -> поле prompt отсутствует",
+            _prompt_for(hotwords="", initial_prompt="") is None)
+# конфиг без атрибута hotwords вообще (getattr-фолбэк) ведёт себя как пустой
+_cfg_no_hw_attr = S(language="ru", vad_filter=False, initial_prompt="Промпт.",
+                    beam_size=5, min_language_probability=0.0)
+_bt_hw.transcribe(np.zeros(16000, dtype=np.float32), _cfg_no_hw_attr)
+ok &= check("prompt: конфиг без атрибута hotwords -> только initial_prompt",
+            _bt_hw._server.calls[-1][1].get("prompt") == "Промпт.")
+
 
 class _BoomServer:
     def alive(self):
@@ -338,6 +370,104 @@ except RuntimeError as e:
                 "whisper-server" in str(e) and "server.log" in str(e))
 ok &= check("ServerProcess: лог сервера записан",
             os.path.isfile(_log) and os.path.getsize(_log) > 0)
+
+
+# ── /health и /inference на 127.0.0.1 обходят системный/переменный прокси ──
+class _RecordingHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass   # не засорять вывод теста
+
+    def _hit(self):
+        self.server.hits.append(self.path)
+
+
+class _FakeProxyHandler(_RecordingHandler):
+    """Ничего не должен получить — в этом весь смысл теста."""
+
+    def do_GET(self):
+        self._hit()
+        self.send_response(502)
+        self.end_headers()
+
+    def do_POST(self):
+        self._hit()
+        self.send_response(502)
+        self.end_headers()
+
+
+class _FakeWhisperServerHandler(_RecordingHandler):
+    def do_GET(self):
+        self._hit()
+        self.send_response(200 if self.path == "/health" else 404)
+        self.end_headers()
+
+    def do_POST(self):
+        self._hit()
+        length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(length)   # тело (multipart) не парсим — не нужно тесту
+        body = json.dumps({"segments": [{"text": "ок", "start": 0.0, "end": 1.0}]}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+_proxy_srv = http.server.HTTPServer(("127.0.0.1", 0), _FakeProxyHandler)
+_proxy_srv.hits = []
+_fake_srv = http.server.HTTPServer(("127.0.0.1", 0), _FakeWhisperServerHandler)
+_fake_srv.hits = []
+threading.Thread(target=_proxy_srv.serve_forever, daemon=True).start()
+threading.Thread(target=_fake_srv.serve_forever, daemon=True).start()
+
+_env_keys = ("HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy")
+_env_backup = {k: os.environ.get(k) for k in _env_keys}
+os.environ["HTTP_PROXY"] = f"http://127.0.0.1:{_proxy_srv.server_port}"
+os.environ["http_proxy"] = os.environ["HTTP_PROXY"]
+os.environ.pop("NO_PROXY", None)
+os.environ.pop("no_proxy", None)
+try:
+    # контроль: без обхода запрос к 127.0.0.1 ушёл бы в прокси — иначе тест
+    # ничего не проверяет (мало ли NO_PROXY уже стоял в окружении). Через
+    # build_opener() (не urlopen()) — у urlopen() свой закэшированный на
+    # модуль opener, ProxyHandler в нём читает переменные окружения только
+    # при первом вызове urlopen() за весь процесс (тут это уже случилось
+    # раньше, в тестах ensure_engine), а не при каждом запросе
+    import urllib.request as _ur
+    try:
+        _ur.build_opener().open(
+            f"http://127.0.0.1:{_fake_srv.server_port}/health", timeout=2)
+    except Exception:
+        pass   # прокси отвечает 502 -> HTTPError, для контроля это не важно
+    ok &= check("контроль: обычный opener идёт через прокси (тест валиден)",
+                _proxy_srv.hits != [])
+    _proxy_srv.hits.clear()
+
+    _sp2 = wc.ServerProcess("unused.exe", "unused-model")
+    _sp2.port = _fake_srv.server_port
+    _sp2._proc = S(poll=lambda: None)   # «процесс жив» — _wait_ready его не трогает
+    _sp2._wait_ready(timeout=5)
+    ok &= check("health в обход прокси: дошёл до фейкового whisper-server",
+                "/health" in _fake_srv.hits)
+    ok &= check("health в обход прокси: прокси не тронут", _proxy_srv.hits == [])
+
+    _resp = _sp2.inference(wc.encode_wav(np.zeros(1600, dtype=np.float32)),
+                           {"response_format": "json"})
+    ok &= check("inference в обход прокси: ответ от фейкового whisper-server",
+                _resp["segments"][0]["text"] == "ок")
+    ok &= check("inference в обход прокси: прокси так и не тронут",
+                _proxy_srv.hits == [])
+finally:
+    for k in _env_keys:
+        v = _env_backup[k]
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    _proxy_srv.shutdown()
+    _fake_srv.shutdown()
+    _proxy_srv.server_close()
+    _fake_srv.server_close()
 
 shutil.rmtree(_tmp, ignore_errors=True)
 
