@@ -31,13 +31,17 @@ jobs:
 
       # Гейт, как в release.yml: --no-sync — иначе uv run сделал бы неявный
       # пере-sync под дефолтный набор пакетов.
+      # Гоняем ВСЕ файлы и падаем в конце: при выходе на первом упавшем остальные
+      # тесты на Windows не запускаются вовсе, и их поломки не видно до следующего пуша.
       - name: Run tests
         shell: pwsh
         run: |
+          $failed = @()
           Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object {
             uv run --no-sync python $_.FullName
-            if ($LASTEXITCODE -ne 0) { Write-Error "FAILED: $($_.Name)"; exit 1 }
+            if ($LASTEXITCODE -ne 0) { $failed += $_.Name }
           }
+          if ($failed) { Write-Error "FAILED: $($failed -join ', ')"; exit 1 }
 
       - name: Lint (ruff)
         run: uvx ruff check .

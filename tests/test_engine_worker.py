@@ -58,6 +58,9 @@ class FakeListener:
 
 
 dictate.keyboard.Listener = FakeListener
+# реальный микрофон не нужен (на CI-раннере его и нет): без подмены проверка при
+# старте переинициализирует настоящий PortAudio и переводит движок в «нет микрофона»
+dictate.mic_available = lambda: True
 
 
 class FakeStream:
@@ -319,7 +322,10 @@ app8 = r8.app
 app8.start()
 ok &= check("stop(): рабочий поток жив после старта",
             wait_until(lambda: app8._worker is not None and app8._worker.is_alive()))
-backends.select_backend = _orig_select
+# фейковый select_backend держим до конца первой загрузки: вернуть настоящий раньше —
+# и рабочий поток пойдёт качать реальную модель (на CI с сетью это минуты)
+ok &= check("stop(): первая загрузка завершилась",
+            wait_until(lambda: app8.backend is not None and not app8.loading))
 
 app8.stop()
 ok &= check("stop(): рабочий поток завершился",
