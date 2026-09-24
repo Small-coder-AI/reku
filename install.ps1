@@ -150,7 +150,7 @@ $codeItems = @("reku", "scripts", "packaging", "requirements.txt", "requirements
 if ($SourcePath) {
     foreach ($it in $codeItems) { Copy-Item -Recurse -Force (Join-Path $SourcePath $it) $InstallDir }
 } else {
-    # НЕ %TEMP%: у профилей с не-ASCII именем (C:\Users\Иван) elevated-запуск
+    # НЕ %TEMP%: у профилей с не-ASCII именем (например, C:\Users\Иван) elevated-запуск
     # PowerShell получает TEMP коротким DOS-путём (C:\Users\ABCD~1\...), и
     # Windows PowerShell 5.1 спотыкается на «~» при разрешении пути — установка
     # валилась прямо здесь, SilentlyContinue не спасал (боевой случай 2026-07-26).
