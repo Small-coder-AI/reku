@@ -65,9 +65,10 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
   `tests/test_paths.py` — **намеренная миграция** каталога данных со старого имени продукта,
   не мусор для чистки.
 - **OpenVINO-путь**: `hotwords` передаются (WhisperGenerationConfig их принимает). Декод
-  по умолчанию greedy: CT2-поле `beam_size` здесь намеренно НЕ используется (молча замедлило
-  бы iGPU), beam search — только через опт-ин `ov_num_beams`. `min_language_probability`
-  не действует — движок не отдаёт уверенность в языке.
+  всегда greedy: `num_beams` не передаётся, `beam_size` не слушается — в openvino-genai
+  2026.2.1 WhisperPipeline на GPU с `num_beams>1` падает на каждом вызове (проверено на
+  железе). Не «чинить» симметрию с CUDA-путём, пока новая версия OV не проверена на GPU.
+  `min_language_probability` не действует — движок не отдаёт уверенность в языке.
 - **AMD-путь (whisper.cpp)**: `hotwords` эмулируются через `prompt` (отдельного поля у
   сервера нет); `no_repeat_ngram_size` и `condition_on_previous_text` не действуют (сервер
   v1.9.1 всегда no_context). Запросы к локальному серверу — через `_LOCAL_OPENER` мимо прокси

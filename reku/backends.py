@@ -373,13 +373,10 @@ class OpenVINOBackend(Backend):
         hotwords = getattr(cfg, "hotwords", "")
         if hotwords:
             kwargs["hotwords"] = hotwords
-        # num_beams — опт-ин через отдельное поле ov_num_beams, а не через
-        # beam_size: beam_size — CT2-поле, начни OV-путь его слушать, iGPU-
-        # пользователи получили бы неожиданное замедление без своего решения.
-        # 1 (дефолт) = greedy, как и было, как проверено бенчем.
-        num_beams = getattr(cfg, "ov_num_beams", 1)
-        if num_beams > 1:
-            kwargs["num_beams"] = num_beams
+        # num_beams намеренно не передаём (и beam_size не слушаем): в openvino-genai
+        # 2026.2.1 WhisperPipeline на GPU с num_beams>1 падает на каждом вызове
+        # («Logits batch size doesn't match the number of beams»), на CPU работает —
+        # но этот бэкенд только igpu/npu. Всегда greedy, как проверено бенчем.
         # no_repeat_ngram_size/condition_on_previous_text — CT2-специфика,
         # в GenAI не пробрасываются.
         result = self._pipe.generate(audio.tolist(), **kwargs)

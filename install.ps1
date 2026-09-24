@@ -249,6 +249,24 @@ if (Test-Path $lockFile) {
 & $vpy -m pip install -r $reqFile @constraintArgs
 if ($LASTEXITCODE -ne 0) { throw "pip не смог поставить зависимости (см. вывод выше)." }
 
+# Переход с полного PySide6 на PySide6-Essentials: pip не удаляет то, чего больше нет
+# в requirements, и у обновлённой установки полный PySide6 с Addons (~0.4 ГБ) остался
+# бы лежать. Удалять только вместе с переустановкой Essentials: RECORD метапакета и
+# Addons числят за собой общие файлы (PySide6/__init__.py и др.), uninstall сносит и их.
+# Старые исходники (-Ref на релиз с полным PySide6) не трогаем.
+$essentialsReq = $req | Where-Object { $_ -match "^PySide6-Essentials==" } | Select-Object -First 1
+if ($essentialsReq) {
+    $qtLeftovers = @(& $vpy -m pip list --format=freeze 2>$null |
+        Where-Object { $_ -match "^PySide6([_-]Addons)?==" } |
+        ForEach-Object { ($_ -split "==")[0] })
+    if ($qtLeftovers.Count -gt 0) {
+        Write-Host "    Убираю полный PySide6 (Addons не нужны)..."
+        & $vpy -m pip uninstall -y @qtLeftovers --quiet
+        & $vpy -m pip install --force-reinstall --no-deps $essentialsReq --quiet
+        if ($LASTEXITCODE -ne 0) { throw "pip не смог переустановить $essentialsReq (см. вывод выше)." }
+    }
+}
+
 # ── 4б. Проверка окружения ───────────────────────────────────
 # Битые файлы в venv для pip невидимы: пакет числится установленным, а импорт
 # падает (боевой случай: null bytes в site-packages после сбоя — приложение
