@@ -45,6 +45,9 @@ irm https://raw.githubusercontent.com/Small-coder-AI/reku/main/install.ps1 | % T
 `% TrimStart ([char]0xFEFF)` strips the UTF-8 BOM that Windows PowerShell 5.1 keeps at the
 front of the downloaded script — without it `iex` misreads the first comment line as a
 command. The script detects your hardware, installs only what is needed (~1–3 GB) and creates shortcuts.
+It installs the code of the **latest release** with dependency versions pinned to the tested
+set (`requirements.lock.txt`); to try the current `main` or a specific tag, download the script
+and run `.\install.ps1 -Ref main` (or `-Ref v0.2.3`).
 The speech model is downloaded on first launch. To update, run the same command again.
 To uninstall, download install.ps1 and run it with `-Uninstall`.
 
@@ -90,7 +93,8 @@ Update later with `uv tool upgrade reku`.
 The window: borderless (dark or light theme), mic orb (status by color), live waveform
 while recording, a record button, a language picker, gear → settings
 (model/device/precision/hotkey/mode/theme/VAD/filter/term dictionary/prompt). Closing the
-window minimizes to tray; quit from the tray menu.
+window minimizes to tray; quit from the tray menu. With autostart enabled, Reku starts
+straight into the tray (`--minimized`).
 
 Wait for **Ready…** (the model takes ~6 s to load), then hold the hotkey (right Ctrl by
 default), speak, release. The text is pasted at the cursor. **Keep a single instance
@@ -113,7 +117,8 @@ Created on first launch. The essentials:
 | `language` | `"ru"` | `"ru"` pins the language (fewer Latin-inside-Cyrillic artifacts); `""` — auto-detect |
 | `initial_prompt` | Russian anchor | biases the decoder towards Cyrillic; keep it Russian, put terms into `hotwords` |
 | `hotwords` | empty | your brands/terms, comma-separated (e.g. `GitHub, Docker, 1С`) — targeted bias |
-| `beam_size` | `5` | `1` is faster, `5` is more accurate |
+| `beam_size` | `5` | `1` is faster, `5` is more accurate (CUDA/CPU and AMD paths) |
+| `ov_num_beams` | `1` | Intel (OpenVINO) path: `1` = greedy, `>1` = beam search (more accurate, slower on an iGPU) |
 | `vad_filter` | `true` | cuts silence/noise — the **main** hallucination guard |
 | `condition_on_previous_text` | `false` | `false` = fewer repetition loops |
 | `no_repeat_ngram_size` | `0` | `0` = off: the n-gram ban cannot tell a loop from a legitimately repeated word and mangles the 2nd/3rd occurrence; loops are already covered by the layers above |
@@ -183,9 +188,11 @@ ready-made int8 models are downloaded from HF (`OpenVINO/whisper-*-int8-ov`, the
 `OV_MODEL_MAP` in backends.py); the first load compiles the model for your specific GPU
 (tens of seconds, one-off), after that — cache in `ov_cache/` and a ~2–3 s start.
 VAD works (Silero from faster-whisper), the hallucination filters work;
-`min_language_probability` has NO effect on this path (the engine does not report language
-confidence), decoding is greedy (beam_size is ignored); `hotwords` (the custom vocabulary)
-are not supported by this engine either. Speed verified on Arc 140T; on weak iGPUs
+`hotwords` (the custom vocabulary) work as well; `min_language_probability` has NO effect
+on this path (the engine does not report language confidence). Decoding is greedy by
+default (`beam_size` applies to the CUDA/CPU path only); beam search can be enabled with
+`ov_num_beams` in config.json — more accurate but slower on an iGPU, benchmark it on your
+machine first. Speed verified on Arc 140T; on weak iGPUs
 (UHD 6xx and the like) large-v3 may compile/run slowly — pick `large-v3-turbo` or
 `small` in settings. If OpenVINO fails to start in auto mode at all (driver/memory),
 the app falls back to CPU + small. On machines without NVIDIA you may skip the
@@ -206,8 +213,9 @@ backends.py, large-v3 ≈ 1.1 GB — fits 8 GB VRAM easily). The very first infe
 compiles Vulkan shaders (tens of seconds, one-off per machine — the driver caches them);
 the app warms this up during model load. VAD and the hallucination filters work;
 `min_language_probability` works too (an extra language-detection pass is requested only
-when the filter is enabled); `hotwords`, `no_repeat_ngram_size` and
-`condition_on_previous_text` are not supported by this engine. Server log for
+when the filter is enabled); `hotwords` are passed through the prompt (the server has no
+separate field for them); `no_repeat_ngram_size` and `condition_on_previous_text` are not
+supported by this engine. Requests to the local server bypass any system proxy. Server log for
 diagnostics: `%APPDATA%\Reku\whisper-server.log`; a local engine build can be pointed to
 via the `REKU_WHISPER_CPP_DIR` env var. The same Vulkan path runs on NVIDIA/Intel GPUs
 as well (handy for testing: `"device": "amd"` in config.json).

@@ -13,15 +13,17 @@ Reku — локальная push-to-talk диктовка для Windows (PySide
 План работ по фазам с чек-листами — `docs/ROADMAP.md`: перед задачей сверяйся с ним,
 сделанное отмечай там же.
 
-Дистрибуция: основной путь — `install.ps1` (скачивает main.zip, ставит Python + venv в
-`%LOCALAPPDATA%\Programs\Reku`; обновление = повторный запуск, код заменяется целиком,
-данные живут отдельно). Запасные пути: frozen exe (PyInstaller + Inno Setup) — его же
+Дистрибуция: основной путь — `install.ps1` (ставит код последнего релиза — `-Ref main`
+или `-Ref vX.Y.Z` для другого; Python + venv в `%LOCALAPPDATA%\Programs\Reku`; обновление =
+повторный запуск, код заменяется целиком, данные живут отдельно). Правки в `main` доходят
+до пользователей install.ps1 только с новым релизом (тегом). Запасные пути: frozen exe (PyInstaller + Inno Setup) — его же
 собирает CI на пуш тега `vX.Y.Z` и кладёт в GitHub Release (`.github/workflows/release.yml`);
 и `uv tool install "reku[cuda|intel] @ git+…"` (extras по железу в pyproject.toml).
 Версия живёт в ДВУХ местах — `pyproject.toml` и `reku/__init__.py` (CI сверяет обе с тегом);
-пины зависимостей — в ТРЁХ: `requirements.txt`/`requirements.lock.txt` (их использует
-install.ps1), `pyproject.toml` (прямые + `[tool.uv] constraint-dependencies` для
-транзитивных) и `uv.lock` (перегенерировать `uv lock`) — менять синхронно.
+пины зависимостей — в ТРЁХ: `requirements.txt` + `requirements.lock.txt` (install.ps1 ставит
+первый с constraints из второго), `pyproject.toml` (прямые + `[tool.uv] constraint-dependencies`
+для транзитивных) и `uv.lock` (перегенерировать `uv lock`) — менять синхронно.
+Qt — `PySide6-Essentials` (не полный `PySide6`: Addons не используются).
 
 ## Команды
 
@@ -38,6 +40,8 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
 
 - Тесты — самостоятельные скрипты (печатают OK/FAIL, завершаются `SystemExit`), **не pytest**.
   Не конвертировать в pytest и не запускать pytest'ом — module-level `SystemExit` ломает collection.
+- CI (`.github/workflows/ci.yml`, windows-latest) на каждый push/PR гоняет все тесты
+  (кроме frozen smoke) с `QT_QPA_PLATFORM=offscreen` и `ruff check .` (правила F и E9).
 - `tests\test_frozen_smoke.py` — смоук СОБРАННОГО exe: требует готовый `dist\Reku\Reku.exe`
   и `REKU_SMOKE_DEVICE=cuda|igpu` под реальное железо машины. В общий прогон не входит.
 - Рендер превью UI без GUI-сессии: `scripts/render_preview.py` с `QT_QPA_PLATFORM=offscreen`,
@@ -60,11 +64,14 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
   процесс — см. docstring, там объяснено почему. Упоминания `whisper_ptt` в `config.py` и
   `tests/test_paths.py` — **намеренная миграция** каталога данных со старого имени продукта,
   не мусор для чистки.
-- **OpenVINO-путь ограничен by design**: greedy-декод (beam_size игнорируется), `hotwords`
-  и `min_language_probability` не действуют — движок их не принимает. Не «чинить» симметрию
-  с CUDA-путём.
-- **AMD-путь (whisper.cpp) тоже ограничен by design**: `hotwords`, `no_repeat_ngram_size`
-  и `condition_on_previous_text` не действуют (сервер v1.9.1 всегда no_context).
+- **OpenVINO-путь**: `hotwords` передаются (WhisperGenerationConfig их принимает). Декод
+  по умолчанию greedy: CT2-поле `beam_size` здесь намеренно НЕ используется (молча замедлило
+  бы iGPU), beam search — только через опт-ин `ov_num_beams`. `min_language_probability`
+  не действует — движок не отдаёт уверенность в языке.
+- **AMD-путь (whisper.cpp)**: `hotwords` эмулируются через `prompt` (отдельного поля у
+  сервера нет); `no_repeat_ngram_size` и `condition_on_previous_text` не действуют (сервер
+  v1.9.1 всегда no_context). Запросы к локальному серверу — через `_LOCAL_OPENER` мимо прокси
+  (у пользователей бывает системный прокси); не заменять на голый `urlopen`.
   Движок — НАШ CI-билд whisper-server (workflow `build-whisper-cpp.yml` → служебный релиз
   `engine-whisper-cpp-*-vulkan`); пин версии и sha256 — константы в `reku/whisper_cpp.py`,
   при обновлении движка менять тег/имя/sha256 разом. Первый инференс на машине компилирует
