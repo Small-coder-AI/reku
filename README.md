@@ -47,7 +47,7 @@ front of the downloaded script — without it `iex` misreads the first comment l
 command. The script detects your hardware, installs only what is needed (~1–3 GB) and creates shortcuts.
 It installs the code of the **latest release** with dependency versions pinned to the tested
 set (`requirements.lock.txt`); to try the current `main` or a specific tag, download the script
-and run `.\install.ps1 -Ref main` (or `-Ref v0.2.3`).
+and run `.\install.ps1 -Ref main` (or `-Ref v0.3.0`).
 The speech model is downloaded on first launch. To update, run the same command again.
 To uninstall, download install.ps1 and run it with `-Uninstall`.
 
