@@ -109,14 +109,18 @@ QWidget {{ color: {p.text}; font-family: 'Segoe UI', sans-serif; font-size: 13px
 #TitleLabel {{ color: {p.text}; font-size: 13px; font-weight: 600; letter-spacing: 0.3px; }}
 #StatusLabel {{ color: {p.text2}; font-size: 15px; font-weight: 500; }}
 #HintLabel  {{ color: {p.text_dim}; font-size: 11px; }}
+/* состояние ошибки: обычный (не приглушённый) текст — сообщение важное, его
+   должно быть видно сразу, а не как второстепенную подсказку */
+#HintLabel[errorState="true"] {{ color: {p.text}; font-size: 12px; font-weight: 500; }}
 #SectionLabel {{ color: {p.text_dim}; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; }}
 #RowLabel {{ color: {p.text2}; }}
 
-/* кнопки заголовка (min/close) */
+/* кнопки заголовка (min/close) — обе прозрачные до наведения; у close ещё и
+   свойство role=close даёт красный hover вместо серого */
 #WinBtn {{ background: transparent; border: none; border-radius: 6px;
            color: {p.text2}; font-size: 14px; padding: 0; }}
 #WinBtn:hover {{ background: {p.bg_hover}; color: {p.text}; }}
-#CloseBtn:hover {{ background: {p.rec}; color: white; }}
+#WinBtn[role="close"]:hover {{ background: {p.rec}; color: white; }}
 
 /* первичная кнопка записи */
 #RecordBtn {{ background: {p.accent}; color: white; border: none;

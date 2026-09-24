@@ -25,20 +25,20 @@ if sys.stdout:
 # на 3.12.10 не воспроизводится. Не переносить ниже PySide6!
 import pynput  # noqa: F401
 
-from PySide6.QtCore import Qt, QObject, Signal, QPoint, QSize, QTimer
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
+from PySide6.QtCore import Qt, QObject, Signal, QSize, QTimer
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QFrame, QLabel, QPushButton, QComboBox, QLineEdit,
+    QApplication, QWidget, QFrame, QLabel, QPushButton, QComboBox,
     QVBoxLayout, QHBoxLayout, QStackedWidget, QGraphicsDropShadowEffect,
-    QTextEdit, QPlainTextEdit, QRadioButton, QButtonGroup, QCheckBox,
-    QSystemTrayIcon, QMenu, QSizePolicy, QSizeGrip, QScrollArea,
+    QPlainTextEdit, QRadioButton, QButtonGroup, QCheckBox,
+    QSystemTrayIcon, QMenu, QSizeGrip, QScrollArea,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 _SINGLE_KEY = "reku-single-instance"
 
 from reku import gui_theme as T
-from reku.gui_widgets import MicOrb, WaveformStrip, _c
+from reku.gui_widgets import MicOrb, WaveformStrip, draw_icon
 
 # карты для комбобоксов настроек
 MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "small", "base", "tiny"]
@@ -94,20 +94,37 @@ class TitleBar(QWidget):
         lay.addWidget(self.dot); lay.addWidget(title)
         lay.addStretch(1)
 
-        mini = QPushButton("—"); mini.setObjectName("WinBtn")
-        mini.setFixedSize(28, 28); mini.clicked.connect(win.showMinimized)
-        close = QPushButton("✕"); close.setObjectName("WinBtn")
-        close.setProperty("class", "close")
-        close.setObjectName("CloseBtn"); close.setFixedSize(28, 28)
-        close.clicked.connect(win.hide_to_tray)
-        lay.addWidget(mini); lay.addWidget(close)
+        self.mini_btn = QPushButton(); self.mini_btn.setObjectName("WinBtn")
+        self.mini_btn.setFixedSize(28, 28)
+        self.mini_btn.clicked.connect(win.showMinimized)
+        self.close_btn = QPushButton(); self.close_btn.setObjectName("WinBtn")
+        self.close_btn.setProperty("role", "close")   # для красного hover в QSS
+        self.close_btn.setFixedSize(28, 28)
+        self.close_btn.clicked.connect(win.hide_to_tray)
+        lay.addWidget(self.mini_btn); lay.addWidget(self.close_btn)
+        self.update_icons(T.ACTIVE.text2)
+
+    def update_icons(self, color):
+        """Перерисовать иконки свернуть/закрыть под цвет активной темы."""
+        size = QSize(14, 14)
+        self.mini_btn.setIcon(draw_icon("minimize", color, size=14))
+        self.mini_btn.setIconSize(size)
+        self.close_btn.setIcon(draw_icon("close", color, size=14))
+        self.close_btn.setIconSize(size)
 
     def set_dot(self, rgb):
         self.dot.setStyleSheet(f"color: rgb({rgb[0]},{rgb[1]},{rgb[2]}); font-size: 11px;")
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self._drag = e.globalPosition().toPoint() - self._win.frameGeometry().topLeft()
+        if e.button() != Qt.LeftButton:
+            return
+        handle = self.window().windowHandle()
+        if handle is not None and handle.startSystemMove():
+            # система сама ведёт перетаскивание (даёт Aero Snap на Windows) —
+            # свой mouseMoveEvent-фолбэк не нужен
+            self._drag = None
+            return
+        self._drag = e.globalPosition().toPoint() - self._win.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
         if self._drag is not None and e.buttons() & Qt.LeftButton:
@@ -194,8 +211,11 @@ class MainWindow(QWidget):
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._end_flash)
 
-        self._grip = QSizeGrip(self)   # уголок для растягивания frameless-окна
-        self._grip.setFixedSize(16, 16)
+        # уголок для растягивания frameless-окна — ребёнок КАРТОЧКИ (не self), чтобы
+        # позиционировать его относительно видимой рамки, а не прозрачных полей тени
+        self._grip = QSizeGrip(self.card)
+        self._grip.setFixedSize(14, 14)
+        self._position_grip()
 
         self.set_state("loading")
 
@@ -220,7 +240,10 @@ class MainWindow(QWidget):
 
         lay.addSpacing(4)
         self.hint = QLabel(""); self.hint.setObjectName("HintLabel")
-        self.hint.setAlignment(Qt.AlignCenter); lay.addWidget(self.hint)
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)   # длинное сообщение об ошибке переносится, не режется
+        self.hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(self.hint)
         self._update_hint()
 
         lay.addSpacing(16)
@@ -243,10 +266,10 @@ class MainWindow(QWidget):
         self.lang_combo.currentIndexChanged.connect(self._lang_changed)
         bottom.addWidget(self.lang_combo)
 
-        gear = QPushButton("⚙"); gear.setObjectName("IconBtn")
-        gear.setFixedSize(40, 38); gear.setCursor(Qt.PointingHandCursor)
-        gear.clicked.connect(self._open_settings)
-        bottom.addWidget(gear)
+        self.gear_btn = QPushButton(); self.gear_btn.setObjectName("IconBtn")
+        self.gear_btn.setFixedSize(40, 38); self.gear_btn.setCursor(Qt.PointingHandCursor)
+        self.gear_btn.clicked.connect(self._open_settings)
+        bottom.addWidget(self.gear_btn)
         lay.addLayout(bottom)
         return page
 
@@ -257,11 +280,11 @@ class MainWindow(QWidget):
         lay.setContentsMargins(22, 8, 22, 20); lay.setSpacing(12)
 
         head = QHBoxLayout()
-        back = QPushButton("←"); back.setObjectName("IconBtn")
-        back.setFixedSize(36, 34); back.setCursor(Qt.PointingHandCursor)
-        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        self.back_btn = QPushButton(); self.back_btn.setObjectName("IconBtn")
+        self.back_btn.setFixedSize(36, 34); self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         ttl = QLabel("Настройки"); ttl.setObjectName("TitleLabel")
-        head.addWidget(back); head.addSpacing(6); head.addWidget(ttl); head.addStretch(1)
+        head.addWidget(self.back_btn); head.addSpacing(6); head.addWidget(ttl); head.addStretch(1)
         lay.addLayout(head)
 
         sec1 = QLabel("МОДЕЛЬ"); sec1.setObjectName("SectionLabel"); lay.addWidget(sec1)
@@ -385,7 +408,23 @@ class MainWindow(QWidget):
             if self.cfg.device == "auto" and getattr(b, "device", None) == "cpu":
                 label = "CPU (GPU не найден)"
             dev = " · " + label
+        self._clear_hint_error()   # обычная подсказка — сбросить вид/тултип ошибки, если был
         self.hint.setText(f"{key} · {mode}{dev}")
+
+    def _set_hint_error(self, text):
+        """Показать текст ошибки в #HintLabel: полностью (перенос строк уже
+        включён), с тултипом на случай обрезанной по высоте подсказки, и не
+        приглушённым — как обычный hint (стиль — errorState в QSS)."""
+        self.hint.setText(text)
+        self.hint.setToolTip(text)
+        self.hint.setProperty("errorState", "true")
+        self.hint.style().unpolish(self.hint); self.hint.style().polish(self.hint)
+
+    def _clear_hint_error(self):
+        """Вернуть #HintLabel к обычному приглушённому виду после ошибки."""
+        self.hint.setToolTip("")
+        self.hint.setProperty("errorState", "false")
+        self.hint.style().unpolish(self.hint); self.hint.style().polish(self.hint)
 
     def _update_runtime_label(self):
         b = getattr(self.engine, "backend", None) if self.engine else None
@@ -409,6 +448,13 @@ class MainWindow(QWidget):
             app.setPalette(T.build_palette(pal))
         # перекрасить то, что QSS-перенакат не покрывает напрямую:
         self.titlebar.set_dot(T.STATE_RGB.get(self._state, T.RGB["accent"]))
+        # иконки — рисованные пиксмапы (не шрифт), их цвет не следует за QSS
+        # автоматически, поэтому перерисовываем явно под новую палитру
+        self.titlebar.update_icons(pal.text2)
+        self.gear_btn.setIcon(draw_icon("gear", pal.text2, size=18))
+        self.gear_btn.setIconSize(QSize(18, 18))
+        self.back_btn.setIcon(draw_icon("back", pal.text2, size=18))
+        self.back_btn.setIconSize(QSize(18, 18))
         self.orb.update(); self.wave.update()
         if self._tray_refresh:
             self._tray_refresh(self._state)
@@ -451,11 +497,15 @@ class MainWindow(QWidget):
         busy = state not in ("idle", "recording", "error")   # loading/downloading/transcribing
         self.rec_btn.setEnabled(not busy)
         if state == "idle":
-            self._update_hint()
+            self._update_hint()          # сама сбрасывает стиль/тултип ошибки
             self._update_runtime_label()
         elif state == "error":
             err = getattr(self.engine, "_last_error", None) if self.engine else None
-            self.hint.setText(err or "Не удалось загрузить модель — проверьте устройство/сеть")
+            self._set_hint_error(err or "Не удалось загрузить модель — проверьте устройство/сеть")
+        else:
+            # ушли из error в loading/recording/transcribing, минуя idle — стиль
+            # подсказки вернуть сразу (текст обновит ближайший идущий в idle/error)
+            self._clear_hint_error()
 
     def set_result(self, text):
         # текст уже вставлен в активное окно; в самой программе его не дублируем —
@@ -472,25 +522,33 @@ class MainWindow(QWidget):
         self.orb.set_level(rms)
         self.wave.set_level(rms)
 
+    def _position_grip(self):
+        """Уголок — в нижнем правом углу КАРТОЧКИ (grip — её ребёнок), с отступом,
+        чтобы не попасть под скруглённый border-radius (иначе часть уголка
+        обрезается вместе с углом карточки и визуально пропадает)."""
+        grip = getattr(self, "_grip", None)
+        if grip is None:
+            return
+        inset = 8
+        grip.move(self.card.width() - grip.width() - inset,
+                  self.card.height() - grip.height() - inset)
+        grip.raise_()
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if hasattr(self, "_grip"):
-            m = 8
-            self._grip.move(self.width() - self._grip.width() - m,
-                            self.height() - self._grip.height() - m)
-            self._grip.raise_()
+        self._position_grip()
 
     # ── действия ─────────────────────────────────────────────
     def _toggle_record(self):
+        """Кнопка «Запись»: команда мгновенная и не блокирует GUI-поток — сам
+        движок решает, начать запись или (если модель не поднялась) повторить
+        попытку загрузки, поэтому свой поток здесь не нужен."""
         if self.engine is None:
             return
-        import threading
         if self._state == "recording":
-            threading.Thread(target=self.engine.stop_and_transcribe, daemon=True).start()
-        elif self._state in ("idle", "error"):   # error: повторная попытка (микрофон могли подключить)
-            # в поток, как и stop: путь ошибки start_rec пере-инициализирует PortAudio
-            # (сотни мс) — синхронный вызов подвесил бы GUI-поток
-            threading.Thread(target=self.engine.start_rec, daemon=True).start()
+            self.engine.request_stop()
+        else:
+            self.engine.request_start()
 
     def _lang_changed(self):
         self._sync_cfg_from_disk()   # сохраняем весь конфиг — не затереть правки файла
@@ -624,7 +682,6 @@ def _run_selftest():
     import numpy as np
     from reku import config
     from reku import cuda_setup
-    from reku import backends
     from reku.dictate import DictationApp
 
     result = {"cuda_device_count": 0, "device": None, "transcribe_ok": False,
@@ -654,6 +711,14 @@ def _run_selftest():
     return 0 if (result["device"] and result["transcribe_ok"]) else 1
 
 
+def _should_start_minimized(argv) -> bool:
+    """--minimized в аргументах командной строки -> при старте не показывать окно,
+    только трей (автозапуск при входе в Windows не должен разворачивать окно
+    на весь экран каждый раз). Чистая функция от argv — без побочных эффектов,
+    чтобы проверять её без QApplication."""
+    return "--minimized" in argv
+
+
 def main():
     import threading
     from reku import config
@@ -679,6 +744,13 @@ def main():
         import ctypes
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Reku")
+        except Exception:
+            pass
+        try:
+            # миграция для автозапуска, сохранённого до появления --minimized —
+            # иначе старые установки продолжат разворачивать окно при каждом входе
+            from reku import autostart
+            autostart.ensure_minimized_flag()
         except Exception:
             pass
 
@@ -747,7 +819,8 @@ def main():
     app.styleHints().colorSchemeChanged.connect(
         lambda *_: win.apply_theme() if win.cfg.theme == "system" else None)
 
-    win.show()
+    if not _should_start_minimized(sys.argv):
+        win.show()
     threading.Thread(target=lambda: _safe_engine_call(engine.start, engine, bridge),
                      daemon=True).start()
     sys.exit(app.exec())
