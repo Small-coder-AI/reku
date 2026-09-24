@@ -230,9 +230,8 @@ class DictationApp:
         # откатываем флаг, иначе _recording залипнет True и запись больше не запустится
         try:
             self._stream = self._open_stream(cb)
-        # e переприсваивается ниже (except Exception as e2: e = e2) и читается в
-        # _last_error/print дальше по коду — ruff не видит эту связь, отсюда noqa
-        except Exception as e:  # noqa: F841
+        except Exception as first_err:
+            err = first_err
             self._stream = None
             # mic_available() переинициализирует PortAudio: микрофон, подключённый
             # после старта приложения, только так и становится видим — если он
@@ -241,12 +240,12 @@ class DictationApp:
             if mic_ok:
                 try:
                     self._stream = self._open_stream(cb)
-                except Exception as e2:
-                    e = e2
+                except Exception as retry_err:
+                    err = retry_err
             if self._stream is None:
                 self._recording = False
-                self._last_error = str(e) if mic_ok else MIC_NOT_FOUND_MSG
-                print(f"[start_rec] не смог открыть микрофон: {e}", file=sys.stderr)
+                self._last_error = str(err) if mic_ok else MIC_NOT_FOUND_MSG
+                print(f"[start_rec] не смог открыть микрофон: {err}", file=sys.stderr)
                 self._set_state("error")
                 return
         # пока стрим открывался (ретрай с пере-инициализацией PortAudio — сотни мс),

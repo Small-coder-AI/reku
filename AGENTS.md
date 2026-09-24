@@ -76,6 +76,11 @@ Get-ChildItem tests\test_*.py -Exclude test_frozen_smoke.py | ForEach-Object { .
   `engine-whisper-cpp-*-vulkan`); пин версии и sha256 — константы в `reku/whisper_cpp.py`,
   при обновлении движка менять тег/имя/sha256 разом. Первый инференс на машине компилирует
   Vulkan-шейдеры (десятки секунд) — поэтому в `load()` есть прогрев, не удалять.
+- **Колбэки хоткея (`_on_press`/`_on_release`) работают в потоке низкоуровневого хука
+  клавиатуры**: в них только постановка команды в очередь (`request_start/stop/load`),
+  всю работу делает рабочий поток `DictationApp`. Никакого I/O, PortAudio и долгих локов в
+  колбэках: превышение `LowLevelHooksTimeout` — и Windows молча снимает хук. GUI зовёт те
+  же `request_*`. Слушатель клавиш стартует независимо от загрузки модели.
 - **`REKU_SELFTEST=1`** — хук в `gui.main()`: вместо UI выполняется короткая самопроверка,
   результат в `%APPDATA%\Reku\selftest.json` (на этом построен test_frozen_smoke.py).
 - GUI при старте снимает залипшие offline-флаги HuggingFace (`TRANSFORMERS_OFFLINE` и т.п.),
